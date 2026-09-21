@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.github.takec02.aiagent</string>
+  <key>CFBundleName</key><string>AIエージェント</string>
+  <key>CFBundleDisplayName</key><string>AIエージェント</string>
+  <key>CFBundleExecutable</key><string>AIAgent</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleDevelopmentRegion</key><string>ja</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>呼びかけと話しかけた内容を聞き取るためにマイクを使います。音声は Mac の中で文字に変換されます。</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>話しかけた内容を Mac の中で文字に変換するために使います。</string>
+  <key>NSAppleEventsUsageDescription</key><string>ミュージックの再生操作など、Mac のアプリを操作するために使います。</string>
+</dict>
+</plist>
