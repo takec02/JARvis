@@ -35,7 +35,7 @@ private struct GeneralSettings: View {
                 }
                 TextField("ウェイクワード", text: $s.wakeWord, prompt: Text("空欄なら名前（\(s.agentName)）"))
                     .onSubmit { agent.wakeWordsChanged() }
-                TextField("ウェイクワードの別表記", text: $s.wakeAliases, prompt: Text("例: ハンベエ, 半兵衛"))
+                TextField("ウェイクワードの別表記", text: $s.wakeAliases, prompt: Text("例: カンスケ, 勘助"))
                     .onSubmit { agent.wakeWordsChanged() }
                 Text("ウェイクワード（または別表記）が聞こえたときだけ反応します。聞き取られにくいときは、読みや別の書き方をカンマ区切りで追加してください。")
                     .font(.caption).foregroundStyle(.secondary)

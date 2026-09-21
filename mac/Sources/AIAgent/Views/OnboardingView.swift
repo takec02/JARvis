@@ -5,14 +5,14 @@ struct OnboardingView: View {
     @Environment(AgentController.self) private var agent
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
-    @State private var name = ""
+    @State private var name = "カンスケ"  // 初期値。自由に書き換えられる
     @State private var wakeWord = ""
     @State private var mode: DisplayMode = .menuBar
 
     private let tint = AgentState.listening.tint
     private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
     private var trimmedWake: String { wakeWord.trimmingCharacters(in: .whitespaces) }
-    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? "ハンベエ" : trimmedName) : trimmedWake }
+    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? "カンスケ" : trimmedName) : trimmedWake }
 
     var body: some View {
         ZStack {
@@ -31,12 +31,11 @@ struct OnboardingView: View {
                     }
                 }
 
-                field(title: "NAME ─ 名前（必須）", placeholder: "例: ハンベエ、カンベエ、ハンゾウ", text: $name, large: true,
-                      notes: ["画面や会話の中で使われる、エージェントの名前です。下の偉人から選ぶか、自由に入力してください。"])
+                field(title: "NAME ─ 名前（必須）", placeholder: "エージェントの名前", text: $name, large: true,
+                      notes: ["画面や会話の中で使われる、エージェントの名前です。自由に変更できます。"])
 
-                figurePicker
 
-                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ ハンベエ）", text: $wakeWord,
+                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ カンスケ）", text: $wakeWord,
                       notes: ["この言葉が聞こえたときだけ反応します。それ以外の会話には反応しません。「\(wakePreview)、今何時？」",
                               "英字や漢字はカタカナで入れると確実です。短い言葉や日常語（例: アイ、テレビ）は誤反応しやすくなります。"])
 
@@ -69,54 +68,6 @@ struct OnboardingView: View {
         }
         .frame(width: 480)
         .preferredColorScheme(.dark)
-    }
-
-    /// 日本の偉人から名前を選ぶ
-    private var figurePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                label("日本の偉人（軍師・側近・忍び）から選ぶ")
-                Spacer()
-                Button {
-                    let pool = HistoricalFigure.all.filter { $0.name != trimmedName }
-                    if let f = pool.randomElement() { name = f.name }
-                } label: {
-                    Label("おまかせ", systemImage: "dice")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(tint)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .overlay(Capsule().stroke(tint.opacity(0.5), lineWidth: 0.8))
-                }
-                .buttonStyle(.plain)
-            }
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                    ForEach(HistoricalFigure.all) { f in
-                        let selected = f.name == trimmedName
-                        Button { name = f.name } label: {
-                            VStack(spacing: 2) {
-                                Text(f.name)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(selected ? Color.black : .white.opacity(0.9))
-                                Text("\(f.fullName)・\(f.note)")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(selected ? Color.black.opacity(0.7) : .white.opacity(0.4))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(selected ? tint : Color.white.opacity(0.04)))
-                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(tint.opacity(selected ? 0 : 0.25), lineWidth: 0.8))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("\(f.fullName)（\(f.note)）")
-                    }
-                }
-            }
-            .frame(height: 176)
-        }
     }
 
     private func label(_ text: String) -> some View {
