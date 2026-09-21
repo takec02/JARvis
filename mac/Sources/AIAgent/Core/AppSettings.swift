@@ -18,6 +18,8 @@ enum AgentGender: String, CaseIterable, Identifiable {
     case male, female
     var id: String { rawValue }
     var label: String { self == .male ? "男性" : "女性" }
+    /// 初回設定での名前の初期値（猿飛佐助／巴御前より）
+    var defaultName: String { self == .male ? "サスケ" : "トモエ" }
 }
 
 enum BackendKind: String, CaseIterable, Identifiable {

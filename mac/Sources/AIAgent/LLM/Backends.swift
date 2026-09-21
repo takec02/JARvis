@@ -70,7 +70,7 @@ enum HTTP {
 }
 
 @MainActor private func openAIStyleTools() -> [[String: Any]] {
-    Tools.specs.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
+    Tools.allSpecs.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
 }
 
 // MARK: - Ollama (ローカル)
@@ -142,7 +142,7 @@ struct AnthropicBackend: LLMBackend {
                 do {
                     var messages: [[String: Any]] = history.map { ["role": $0.role, "content": $0.content] }
                     messages.append(["role": "user", "content": user])
-                    let tools: [[String: Any]] = Tools.specs.map {
+                    let tools: [[String: Any]] = Tools.allSpecs.map {
                         ["name": $0.name, "description": $0.description, "input_schema": $0.parameters, "eager_input_streaming": true]
                     }
                     let headers = [

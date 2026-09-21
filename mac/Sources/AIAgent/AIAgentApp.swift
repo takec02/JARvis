@@ -69,6 +69,25 @@ private struct MenuBarLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var openWindow: ((String) -> Void)?
 
+    // 動作確認用: `AIAgent --mcp-selftest [ツール名 JSON引数]` で MCP の接続とツール呼び出しを表示して終了する
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--mcp-selftest") else { return }
+        Task { @MainActor in
+            let mcp = MCPManager.shared
+            await mcp.reload()
+            for name in mcp.serverNames {
+                print("[\(name)] \(mcp.status[name]?.label ?? "-") \(mcp.toolNames(of: name))")
+            }
+            if args.count > i + 2 {
+                let (out, isError) = await Tools.execute(name: args[i + 1], arguments: args[i + 2])
+                print("call \(args[i + 1]) → error=\(isError)\n\(out)")
+            }
+            print("specs: \(Tools.allSpecs.count)")
+            exit(0)
+        }
+    }
+
     /// メニューバーのみ: Dock に出さない / ウィンドウ＋Dock: 通常のアプリとして振る舞う
     @MainActor static func applyDisplayMode(_ mode: DisplayMode) {
         NSApp.setActivationPolicy(mode == .window ? .regular : .accessory)

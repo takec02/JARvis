@@ -6,15 +6,31 @@ import Foundation
 struct ToolSpec {
     let name: String
     let description: String
+    /// 引数の JSON Schema
+    let parameters: [String: Any]
+    /// 組み込みツールの引数定義（MCP ツールでは空）
     let properties: [String: [String: Any]]
 
-    var parameters: [String: Any] {
-        ["type": "object", "properties": properties, "required": Array(properties.keys)]
+    init(name: String, description: String, properties: [String: [String: Any]]) {
+        self.name = name
+        self.description = description
+        self.properties = properties
+        parameters = ["type": "object", "properties": properties, "required": Array(properties.keys)]
+    }
+
+    init(name: String, description: String, schema: [String: Any]) {
+        self.name = name
+        self.description = description
+        properties = [:]
+        parameters = schema
     }
 }
 
 @MainActor
 enum Tools {
+    /// AI に渡すすべてのツール（組み込み＋接続中の MCP サーバーのツール）
+    static var allSpecs: [ToolSpec] { specs + MCPManager.shared.toolSpecs }
+
     static let specs: [ToolSpec] = [
         ToolSpec(name: "get_datetime", description: "現在の日付と時刻を取得する", properties: [:]),
         ToolSpec(name: "open_app", description: "Mac のアプリを起動する。name はアプリ名（例: Safari, Music, Finder, カレンダー）",
@@ -40,6 +56,9 @@ enum Tools {
 
     /// ツールを実行して (結果テキスト, エラーかどうか) を返す
     static func execute(name: String, arguments: Any?) async -> (String, Bool) {
+        if MCPManager.shared.handles(name) {
+            return await MCPManager.shared.call(name, arguments: arguments)
+        }
         do {
             let args = try validate(name: name, arguments: arguments)
             return (try await run(name: name, args: args), false)

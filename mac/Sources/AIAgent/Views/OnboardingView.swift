@@ -5,7 +5,7 @@ struct OnboardingView: View {
     @Environment(AgentController.self) private var agent
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
-    @State private var name = "カンスケ"  // 初期値。自由に書き換えられる
+    @State private var name = AgentGender.male.defaultName  // 初期値。性別に連動し、自由に書き換えられる
     @State private var wakeWord = ""
     @State private var userTitle = "あるじ"  // 初期値。自由に書き換えられる
     @State private var honorific = ""
@@ -20,7 +20,7 @@ struct OnboardingView: View {
         return (t.isEmpty ? "あるじ" : t) + honorific
     }
     private var trimmedWake: String { wakeWord.trimmingCharacters(in: .whitespaces) }
-    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? "カンスケ" : trimmedName) : trimmedWake }
+    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? gender.defaultName : trimmedName) : trimmedWake }
 
     var body: some View {
         ZStack {
@@ -39,14 +39,6 @@ struct OnboardingView: View {
                     }
                 }
 
-                field(title: "NAME ─ 名前（必須）", placeholder: "エージェントの名前", text: $name, large: true,
-                      notes: ["画面や会話の中で使われる、エージェントの名前です。自由に変更できます。"])
-
-
-                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ カンスケ）", text: $wakeWord,
-                      notes: ["この言葉が聞こえたときだけ反応します。それ以外の会話には反応しません。「\(wakePreview)、今何時？」",
-                              "英字や漢字はカタカナで入れると確実です。短い言葉や日常語（例: アイ、テレビ）は誤反応しやすくなります。"])
-
                 VStack(alignment: .leading, spacing: 8) {
                     label("VOICE ─ エージェントの性別")
                     HStack(spacing: 10) {
@@ -56,10 +48,14 @@ struct OnboardingView: View {
                         .pickerStyle(.segmented)
                         .labelsHidden()
                         .fixedSize()
+                        .onChange(of: gender) { old, new in
+                            // 名前を自分で変えていなければ、性別に合わせた初期値に差し替える
+                            if trimmedName.isEmpty || trimmedName == old.defaultName { name = new.defaultName }
+                        }
                         Button {
                             tester.gender = gender
                             tester.stop()
-                            tester.say("はじめまして。\(trimmedName.isEmpty ? "カンスケ" : trimmedName)です。")
+                            tester.say("はじめまして。\(trimmedName.isEmpty ? gender.defaultName : trimmedName)です。")
                         } label: {
                             Label("声を聞く", systemImage: "speaker.wave.2")
                                 .font(.system(size: 11, weight: .medium))
@@ -69,8 +65,16 @@ struct OnboardingView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    note("声と話し方が変わります。")
+                    note("声と話し方が変わります。名前の初期値も、男性ならサスケ、女性ならトモエになります。")
                 }
+
+                field(title: "NAME ─ 名前（必須）", placeholder: "エージェントの名前", text: $name, large: true,
+                      notes: ["画面や会話の中で使われる、エージェントの名前です。自由に変更できます。"])
+
+
+                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ サスケ）", text: $wakeWord,
+                      notes: ["この言葉が聞こえたときだけ反応します。それ以外の会話には反応しません。「\(wakePreview)、今何時？」",
+                              "英字や漢字はカタカナで入れると確実です。短い言葉や日常語（例: アイ、テレビ）は誤反応しやすくなります。"])
 
                 VStack(alignment: .leading, spacing: 8) {
                     label("YOU ─ あなたの呼ばれ方")

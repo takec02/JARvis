@@ -7,6 +7,7 @@ struct SettingsView: View {
             GeneralSettings().tabItem { Label("一般", systemImage: "person.crop.circle") }
             AISettings().tabItem { Label("AI", systemImage: "brain") }
             VoiceSettings().tabItem { Label("声", systemImage: "speaker.wave.2") }
+            MCPSettings().tabItem { Label("連携", systemImage: "point.3.connected.trianglepath.dotted") }
         }
         .frame(width: 520)
         .padding(.vertical, 8)
@@ -35,7 +36,7 @@ private struct GeneralSettings: View {
                 }
                 TextField("ウェイクワード", text: $s.wakeWord, prompt: Text("空欄なら名前（\(s.agentName)）"))
                     .onSubmit { agent.wakeWordsChanged() }
-                TextField("ウェイクワードの別表記", text: $s.wakeAliases, prompt: Text("例: カンスケ, 勘助"))
+                TextField("ウェイクワードの別表記", text: $s.wakeAliases, prompt: Text("例: サスケ, 佐助"))
                     .onSubmit { agent.wakeWordsChanged() }
                 Text("ウェイクワード（または別表記）が聞こえたときだけ反応します。聞き取られにくいときは、読みや別の書き方をカンマ区切りで追加してください。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -185,6 +186,72 @@ private struct VoiceSettings: View {
         case .premium: "（プレミアム）"
         case .enhanced: "（拡張）"
         default: ""
+        }
+    }
+}
+
+/// MCP サーバー（右筆・Google Drive など外部ツール）との連携状況
+private struct MCPSettings: View {
+    @State private var mcp = MCPManager.shared
+    @State private var reloading = false
+
+    var body: some View {
+        Form {
+            Section {
+                if let err = mcp.configError {
+                    Text(err).foregroundStyle(.red)
+                }
+                if mcp.serverNames.isEmpty {
+                    Text("まだ読み込まれていません").foregroundStyle(.secondary)
+                }
+                ForEach(mcp.serverNames, id: \.self) { name in
+                    let st = mcp.status[name] ?? .connecting
+                    DisclosureGroup {
+                        let tools = mcp.toolNames(of: name)
+                        if tools.isEmpty {
+                            Text("ツールなし").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text(tools.joined(separator: ", ")).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                    } label: {
+                        HStack {
+                            Circle().fill(color(st)).frame(width: 8, height: 8)
+                            Text(name == "yuhitsu" ? "右筆 (yuhitsu)" : name)
+                            Spacer()
+                            Text(st.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+            } header: {
+                Text("MCP サーバー")
+            } footer: {
+                Text("接続したサーバーのツールは、どの AI からも使えます。未接続のサーバーには1分ごとにつなぎ直します。")
+            }
+            Section {
+                HStack {
+                    Button("設定ファイルを開く") {
+                        mcp.ensureConfigFile()
+                        NSWorkspace.shared.open(MCPManager.configURL)
+                    }
+                    Button(reloading ? "接続中…" : "再読み込み") {
+                        reloading = true
+                        Task { await mcp.reload(); reloading = false }
+                    }
+                    .disabled(reloading)
+                }
+            } footer: {
+                Text("設定ファイルは Claude Desktop などと同じ mcpServers 形式です。各 MCP サーバーの説明にある設定例をそのまま追加できます。例: \"files\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"~/Documents\"] }")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func color(_ s: MCPStatus) -> Color {
+        switch s {
+        case .connected: .green
+        case .connecting: .yellow
+        case .disabled: .gray
+        case .unavailable: .orange
         }
     }
 }
