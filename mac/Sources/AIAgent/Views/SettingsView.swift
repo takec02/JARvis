@@ -39,7 +39,11 @@ private struct GeneralSettings: View {
                     .onSubmit { agent.wakeWordsChanged() }
                 Text("ウェイクワード（または別表記）が聞こえたときだけ反応します。聞き取られにくいときは、読みや別の書き方をカンマ区切りで追加してください。")
                     .font(.caption).foregroundStyle(.secondary)
-                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: トニー（→「トニー様」）"))
+                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: あるじ、トニー"))
+                Picker("敬称", selection: $s.userHonorific) {
+                    ForEach(AppSettings.honorifics, id: \.self) { Text($0.isEmpty ? "なし" : $0).tag($0) }
+                }
+                Text("「\(s.userAddress)」と呼ばれます。").font(.caption).foregroundStyle(.secondary)
             }
             Section("動作") {
                 Picker("表示方法", selection: $s.displayMode) {
@@ -140,9 +144,19 @@ private struct VoiceSettings: View {
         @Bindable var s = agent.settings
         Form {
             Section {
+                Picker("性別", selection: $s.agentGender) {
+                    ForEach(AgentGender.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: s.agentGender) { _, g in
+                    // 選んでいた声が別の性別なら、自動選択に戻す
+                    if let v = Speaker.japaneseVoices.first(where: { $0.identifier == s.voiceIdentifier }), Speaker.gender(of: v) != g {
+                        s.voiceIdentifier = ""
+                    }
+                }
                 Picker("声", selection: $s.voiceIdentifier) {
-                    Text("自動（最も高品質な日本語の声）").tag("")
-                    ForEach(Speaker.japaneseVoices, id: \.identifier) { v in
+                    Text("自動（最も自然な\(s.agentGender.label)の声）").tag("")
+                    ForEach(Speaker.voices(for: s.agentGender), id: \.identifier) { v in
                         Text("\(v.name)\(qualityLabel(v.quality))").tag(v.identifier)
                     }
                 }
@@ -153,13 +167,14 @@ private struct VoiceSettings: View {
                     Spacer()
                     Button("試しに聞く") {
                         tester.voiceIdentifier = s.voiceIdentifier
+                        tester.gender = s.agentGender
                         tester.rate = Float(s.speechRate)
                         tester.stop()
                         tester.say("はじめまして。\(s.agentName)です。ご用件をどうぞ。")
                     }
                 }
             } footer: {
-                Text("より自然な声は「システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 → 声を管理」から Kyoko（プレミアム）などを追加すると選べるようになります。")
+                Text("より自然な声は「システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 → 声を管理」から追加すると選べるようになります。男性なら Otoya、女性なら Kyoko の「拡張」や「プレミアム」がおすすめです。")
             }
         }
         .formStyle(.grouped)

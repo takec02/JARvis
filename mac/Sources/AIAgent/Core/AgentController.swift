@@ -214,6 +214,7 @@ final class AgentController {
         }
         let system = systemPrompt()
         let userText = text
+        syncVoice()
         Task {
             entries.append(ConversationEntry(role: "assistant", text: ""))
             let idx = entries.count - 1
@@ -265,9 +266,15 @@ final class AgentController {
         }
     }
 
-    private func speakAndWait(_ text: String) async {
+    /// 設定画面で変えた声・性別・速さを読み上げに反映する
+    private func syncVoice() {
         speaker.voiceIdentifier = settings.voiceIdentifier
+        speaker.gender = settings.agentGender
         speaker.rate = Float(settings.speechRate)
+    }
+
+    private func speakAndWait(_ text: String) async {
+        syncVoice()
         listener.muted = true
         state = .speaking
         speaker.say(text)
@@ -299,9 +306,11 @@ final class AgentController {
     }
 
     private func systemPrompt() -> String {
-        let title = settings.userTitle.isEmpty ? "ご主人様" : "\(settings.userTitle)様"
+        let title = settings.userAddress
         return """
-        あなたは「\(settings.agentName)」という名前の、\(title)の Mac 上で常駐する執事型 AI アシスタントです。
+        あなたは「\(settings.agentName)」という名前の、ユーザーの Mac 上で常駐する側近の AI アシスタントです。
+        - ユーザーのことは「\(title)」と呼ぶ（敬称を足さず、この呼び方そのままで）。
+        - あなたは\(settings.agentGender == .male ? "男性" : "女性")の側近として、それらしい自然な話し方をする。
         - 返答は音声で読み上げられる。1〜3文の短い話し言葉で、要点から答える。
         - Markdown、箇条書き、絵文字、URL、コードは使わない。数字や記号も読み上げやすく書く。
         - 落ち着いた丁寧な口調で、ときどき控えめなユーモアを交えてよい。

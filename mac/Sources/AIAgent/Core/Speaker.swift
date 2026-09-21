@@ -7,6 +7,7 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
     private var pending = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
     var voiceIdentifier = ""
+    var gender: AgentGender = .male
     var rate: Float = AVSpeechUtteranceDefaultSpeechRate
 
     override init() {
@@ -14,15 +15,37 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
         synth.delegate = self
     }
 
+    /// 性別を返さない声が多いため、既知の声は名前で判定する（並びは自然さの順）
+    private static let maleNames = ["Otoya", "Hattori", "Reed", "Eddy", "Rocko", "Grandpa"]
+    private static let femaleNames = ["Kyoko", "O-Ren", "Flo", "Sandy", "Shelley", "Grandma"]
+
+    static func gender(of v: AVSpeechSynthesisVoice) -> AgentGender? {
+        switch v.gender {
+        case .male: return .male
+        case .female: return .female
+        default:
+            if maleNames.contains(where: v.name.hasPrefix) { return .male }
+            if femaleNames.contains(where: v.name.hasPrefix) { return .female }
+            return nil
+        }
+    }
+
     static var japaneseVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.hasPrefix("ja") }
-            .sorted { ($0.quality.rawValue, $0.name) > ($1.quality.rawValue, $1.name) }
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("ja") }
+    }
+
+    /// 指定した性別の声を、品質の高い順・自然さの順に並べる
+    static func voices(for gender: AgentGender) -> [AVSpeechSynthesisVoice] {
+        let order = gender == .male ? maleNames : femaleNames
+        func rank(_ v: AVSpeechSynthesisVoice) -> Int { order.firstIndex(where: v.name.hasPrefix) ?? order.count }
+        return japaneseVoices
+            .filter { Self.gender(of: $0) == gender }
+            .sorted { ($0.quality.rawValue, -rank($0)) > ($1.quality.rawValue, -rank($1)) }
     }
 
     private var voice: AVSpeechSynthesisVoice? {
         if !voiceIdentifier.isEmpty, let v = AVSpeechSynthesisVoice(identifier: voiceIdentifier) { return v }
-        return Self.japaneseVoices.first ?? AVSpeechSynthesisVoice(language: "ja-JP")
+        return Self.voices(for: gender).first ?? AVSpeechSynthesisVoice(language: "ja-JP")
     }
 
     func say(_ text: String) {

@@ -14,6 +14,12 @@ enum DisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum AgentGender: String, CaseIterable, Identifiable {
+    case male, female
+    var id: String { rawValue }
+    var label: String { self == .male ? "男性" : "女性" }
+}
+
 enum BackendKind: String, CaseIterable, Identifiable {
     case local, claude, gpt, gemini
     var id: String { rawValue }
@@ -62,13 +68,18 @@ final class AppSettings {
     /// 呼びかけの言葉。空なら名前を使う
     var wakeWord: String { didSet { d.set(wakeWord, forKey: "wakeWord") } }
     var wakeAliases: String { didSet { d.set(wakeAliases, forKey: "wakeAliases") } }
+    /// ユーザーの呼ばれ方（例: あるじ、トニー）
     var userTitle: String { didSet { d.set(userTitle, forKey: "userTitle") } }
+    /// 呼ばれ方に付ける敬称（空ならなし）
+    var userHonorific: String { didSet { d.set(userHonorific, forKey: "userHonorific") } }
+    static let honorifics = ["", "様", "さん", "殿", "くん", "ちゃん"]
     var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
     var backend: BackendKind { didSet { d.set(backend.rawValue, forKey: "backend") } }
     var ollamaModel: String { didSet { d.set(ollamaModel, forKey: "ollamaModel") } }
     var claudeModel: String { didSet { d.set(claudeModel, forKey: "claudeModel") } }
     var gptModel: String { didSet { d.set(gptModel, forKey: "gptModel") } }
     var geminiModel: String { didSet { d.set(geminiModel, forKey: "geminiModel") } }
+    var agentGender: AgentGender { didSet { d.set(agentGender.rawValue, forKey: "agentGender") } }
     var voiceIdentifier: String { didSet { d.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     var speechRate: Double { didSet { d.set(speechRate, forKey: "speechRate") } }
     var followupSeconds: Double { didSet { d.set(followupSeconds, forKey: "followupSeconds") } }
@@ -78,17 +89,25 @@ final class AppSettings {
         agentName = d.string(forKey: "agentName") ?? ""
         wakeWord = d.string(forKey: "wakeWord") ?? ""
         wakeAliases = d.string(forKey: "wakeAliases") ?? ""
-        userTitle = d.string(forKey: "userTitle") ?? ""
+        userTitle = d.string(forKey: "userTitle") ?? "あるじ"
+        userHonorific = d.string(forKey: "userHonorific") ?? ""
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .window
         backend = BackendKind(rawValue: d.string(forKey: "backend") ?? "") ?? .local
         ollamaModel = d.string(forKey: "ollamaModel") ?? "qwen3:8b"
         claudeModel = d.string(forKey: "claudeModel") ?? "claude-opus-5"
         gptModel = d.string(forKey: "gptModel") ?? "gpt-5-mini"
         geminiModel = d.string(forKey: "geminiModel") ?? "gemini-2.5-flash"
+        agentGender = AgentGender(rawValue: d.string(forKey: "agentGender") ?? "") ?? .male
         voiceIdentifier = d.string(forKey: "voiceIdentifier") ?? ""
         speechRate = d.object(forKey: "speechRate") as? Double ?? 0.52
         followupSeconds = d.object(forKey: "followupSeconds") as? Double ?? 0
         chime = d.object(forKey: "chime") as? Bool ?? true
+    }
+
+    /// 実際にユーザーを呼ぶときの言い方（呼ばれ方＋敬称）
+    var userAddress: String {
+        let t = userTitle.trimmingCharacters(in: .whitespaces)
+        return (t.isEmpty ? "あるじ" : t) + userHonorific
     }
 
     var isNamed: Bool { !agentName.trimmingCharacters(in: .whitespaces).isEmpty }
