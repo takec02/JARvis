@@ -12,7 +12,7 @@ struct OnboardingView: View {
     private let tint = AgentState.listening.tint
     private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
     private var trimmedWake: String { wakeWord.trimmingCharacters(in: .whitespaces) }
-    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? "ゲンナイ" : trimmedName) : trimmedWake }
+    private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? "ハンベエ" : trimmedName) : trimmedWake }
 
     var body: some View {
         ZStack {
@@ -31,12 +31,12 @@ struct OnboardingView: View {
                     }
                 }
 
-                field(title: "NAME ─ 名前（必須）", placeholder: "例: ゲンナイ、ハンベエ、ヒミコ", text: $name, large: true,
+                field(title: "NAME ─ 名前（必須）", placeholder: "例: ハンベエ、カンベエ、ハンゾウ", text: $name, large: true,
                       notes: ["画面や会話の中で使われる、エージェントの名前です。下の偉人から選ぶか、自由に入力してください。"])
 
                 figurePicker
 
-                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ ゲンナイ）", text: $wakeWord,
+                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ ハンベエ）", text: $wakeWord,
                       notes: ["この言葉が聞こえたときだけ反応します。それ以外の会話には反応しません。「\(wakePreview)、今何時？」",
                               "英字や漢字はカタカナで入れると確実です。短い言葉や日常語（例: アイ、テレビ）は誤反応しやすくなります。"])
 
@@ -75,7 +75,7 @@ struct OnboardingView: View {
     private var figurePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                label("日本の偉人から選ぶ")
+                label("日本の偉人（軍師・側近・忍び）から選ぶ")
                 Spacer()
                 Button {
                     let pool = HistoricalFigure.all.filter { $0.name != trimmedName }
