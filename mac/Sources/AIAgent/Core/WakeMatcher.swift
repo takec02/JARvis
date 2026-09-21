@@ -1,18 +1,41 @@
 import Foundation
 
-/// 認識結果の中からエージェントの名前（呼びかけ）を探す。
-/// ひらがな/カタカナ、長音、ヴ/ブ、大文字小文字、空白や句読点の違いを吸収して照合する。
+/// 認識結果の中からウェイクワードを探す。
+/// ひらがな/カタカナ、長音、ヴ/ブ、大文字小文字、空白や句読点の違いを吸収し、
+/// さらに漢字は読みに直して照合する（「のぶなが」が「信長」と書き起こされても反応する）。
 struct WakeMatcher {
     let words: [String]
 
+    /// 正規化した文字と、それぞれが元の文字列のどこから来たか
+    typealias Mapped = (chars: [Character], origin: [String.Index], originEnd: [String.Index])
+
     private static let vuMap: [Character: Character] = ["ァ": "バ", "ィ": "ビ", "ェ": "ベ", "ォ": "ボ"]
-    /// 音声認識が英字で書きがちな呼びかけ語（「Heyジャービス」など）をカタカナに揃える
+    /// 音声認識が英字で書きがちな呼びかけ語（「Hey ◯◯」など）をカタカナに揃える
     private static let englishWords: [String: String] = [
         "hey": "ヘイ", "hi": "ハイ", "ok": "オーケー", "okay": "オーケー", "yo": "ヨー",
     ]
 
-    /// 正規化した文字列と、各文字が元の文字列のどこから来たかの対応を返す
-    static func normalizeWithMap(_ text: String) -> (chars: [Character], origin: [String.Index], originEnd: [String.Index]) {
+    /// カナの母音（ハ→a, ベ→e）。長音の揺れ（ハンベエ/ハンベー、リョウマ/リョーマ）を吸収するのに使う
+    private static func vowel(of c: Character) -> Character? {
+        guard let latin = String(c).applyingTransform(.latinToKatakana, reverse: true), let v = latin.last,
+              "aeiou".contains(v) else { return nil }
+        return v
+    }
+
+    /// 直前のカナの母音を伸ばしているだけの母音カナか（エ段+エ/イ、オ段+オ/ウ など）
+    private static func isVowelExtension(_ c: Character, after prev: Character?) -> Bool {
+        guard let prev, let pv = vowel(of: prev) else { return false }
+        switch c {
+        case "ア": return pv == "a"
+        case "イ": return pv == "i" || pv == "e"
+        case "ウ": return pv == "u" || pv == "o"
+        case "エ": return pv == "e"
+        case "オ": return pv == "o"
+        default: return false
+        }
+    }
+
+    static func normalizeWithMap(_ text: String) -> Mapped {
         let indices = Array(text.indices)
         var chars: [Character] = []
         var origin: [String.Index] = []
@@ -50,6 +73,7 @@ struct WakeMatcher {
                 s = "ブ"
             }
             for c in s where !(c.isWhitespace || c.isPunctuation || c.isSymbol || c == "ー" || c == "・") {
+                if isVowelExtension(c, after: chars.last) { continue }
                 chars.append(c)
                 origin.append(idx)
                 originEnd.append(idx)
@@ -59,22 +83,53 @@ struct WakeMatcher {
         return (chars, origin, originEnd)
     }
 
-    static func normalize(_ s: String) -> String { String(normalizeWithMap(s).chars) }
+    /// 漢字まじりの文を単語ごとに読み（カタカナ）へ直し、正規化する
+    static func readingWithMap(_ text: String) -> Mapped {
+        var result: Mapped = ([], [], [])
+        let cf = text as CFString
+        let tokenizer = CFStringTokenizerCreate(nil, cf, CFRangeMake(0, CFStringGetLength(cf)),
+                                                kCFStringTokenizerUnitWordBoundary, Locale(identifier: "ja_JP") as CFLocale)
+        while CFStringTokenizerAdvanceToNextToken(tokenizer) != [] {
+            let r = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            guard let range = Range(NSRange(location: r.location, length: r.length), in: text), !range.isEmpty else { continue }
+            let latin = CFStringTokenizerCopyCurrentTokenAttribute(tokenizer, kCFStringTokenizerAttributeLatinTranscription) as? String
+            let kana = latin?.applyingTransform(.latinToKatakana, reverse: false) ?? String(text[range])
+            let last = text.index(before: range.upperBound)
+            for c in normalizeWithMap(kana).chars {
+                result.chars.append(c)
+                result.origin.append(range.lowerBound)
+                result.originEnd.append(last)
+            }
+        }
+        return result
+    }
 
-    /// 名前が含まれていれば、名前を除いた残りの文（命令）を返す。含まれていなければ nil。
+    static func normalize(_ s: String) -> String { String(normalizeWithMap(s).chars) }
+    static func reading(_ s: String) -> String { String(readingWithMap(s).chars) }
+
+    /// ウェイクワードが含まれていれば、それを除いた残りの文（命令）を返す。含まれていなければ nil。
     func extractCommand(from text: String) -> String? {
-        let (chars, origin, originEnd) = Self.normalizeWithMap(text)
-        let normText = String(chars)
-        for word in words.sorted(by: { Self.normalize($0).count > Self.normalize($1).count }) {
-            let w = Self.normalize(word)
-            guard !w.isEmpty, let r = normText.range(of: w) else { continue }
-            let start = normText.distance(from: normText.startIndex, to: r.lowerBound)
-            let end = start + w.count - 1
-            let before = String(text[..<origin[start]])
-            // 名前の直後に続く長音や句読点（正規化で消える文字）は命令に含めない
-            let after = String(text[text.index(after: originEnd[end])...].drop { Self.normalize(String($0)).isEmpty })
-            return (before + " " + after).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let sorted = words.sorted { Self.normalize($0).count > Self.normalize($1).count }
+        // まず表記どおりに探し、見つからなければ読みで探す
+        let direct = Self.normalizeWithMap(text)
+        for word in sorted {
+            if let cmd = Self.command(in: text, mapped: direct, word: Self.normalize(word)) { return cmd }
+        }
+        let byReading = Self.readingWithMap(text)
+        for word in sorted {
+            if let cmd = Self.command(in: text, mapped: byReading, word: Self.reading(word)) { return cmd }
         }
         return nil
+    }
+
+    private static func command(in text: String, mapped: Mapped, word: String) -> String? {
+        let normText = String(mapped.chars)
+        guard !word.isEmpty, let r = normText.range(of: word) else { return nil }
+        let start = normText.distance(from: normText.startIndex, to: r.lowerBound)
+        let end = start + word.count - 1
+        let before = String(text[..<mapped.origin[start]])
+        // ウェイクワードの直後に続く長音や句読点（正規化で消える文字）は命令に含めない
+        let after = String(text[text.index(after: mapped.originEnd[end])...].drop { normalize(String($0)).isEmpty })
+        return (before + " " + after).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
     }
 }

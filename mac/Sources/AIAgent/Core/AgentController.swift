@@ -126,6 +126,8 @@ final class AgentController {
     // MARK: 音声認識の結果
 
     private func onTranscript(_ text: String, isFinal: Bool) {
+        // 聞き取った内容は周囲の会話も含むため、明示的に有効にしたとき（調査用）だけ記録する
+        if isFinal, UserDefaults.standard.bool(forKey: "debugTranscripts") { Log.write("heard [\(state.label)] \(text)") }
         guard state == .idle || state == .listening else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
