@@ -7,7 +7,7 @@ struct OnboardingView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var name = "カンスケ"  // 初期値。自由に書き換えられる
     @State private var wakeWord = ""
-    @State private var mode: DisplayMode = .menuBar
+    @State private var mode: DisplayMode = .window
 
     private let tint = AgentState.listening.tint
     private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }

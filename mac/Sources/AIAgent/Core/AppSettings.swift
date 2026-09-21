@@ -4,7 +4,7 @@ import Security
 import ServiceManagement
 
 enum DisplayMode: String, CaseIterable, Identifiable {
-    case menuBar, window
+    case window, menuBar
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -79,7 +79,7 @@ final class AppSettings {
         wakeWord = d.string(forKey: "wakeWord") ?? ""
         wakeAliases = d.string(forKey: "wakeAliases") ?? ""
         userTitle = d.string(forKey: "userTitle") ?? ""
-        displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .menuBar
+        displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .window
         backend = BackendKind(rawValue: d.string(forKey: "backend") ?? "") ?? .local
         ollamaModel = d.string(forKey: "ollamaModel") ?? "qwen3:8b"
         claudeModel = d.string(forKey: "claudeModel") ?? "claude-opus-5"
