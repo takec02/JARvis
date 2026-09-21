@@ -1,0 +1,62 @@
+# config.toml にコピーして編集してください:  cp config.example.toml config.toml
+# 書かなかった項目はデフォルト値 (jarvis/config.py) が使われます。
+
+[assistant]
+name = "ジャービス"
+user_name = ""            # 例: "トニー" → 「トニー様」と呼ばれる
+backend = "local"         # 起動時の AI: local / claude / gpt / gemini（会話中に音声で切り替え可）
+followup_seconds = 8.0    # 応答後、ウェイクワードなしで続けて話せる秒数
+history_turns = 10        # 覚えておく会話の往復数
+
+[wake]
+# "openwakeword": 英語の "Hey Jarvis" で起動（軽量・常時待機向き）
+# "whisper"     : 「ジャービス、今何時？」のように日本語の名前で起動（CPU/GPU 使用がやや多い）
+mode = "openwakeword"
+threshold = 0.5           # 誤反応が多ければ上げる / 反応が悪ければ下げる
+keywords = ["ジャービス", "ジャーヴィス", "じゃーびす", "jarvis"]   # whisper モード用
+chime = true
+
+[audio]
+vad_aggressiveness = 2    # 0〜3。騒がしい部屋なら 3
+silence_seconds = 0.8     # この秒数黙ったら発話終了とみなす
+max_record_seconds = 15.0
+start_timeout_seconds = 5.0
+input_device = ""         # 空ならシステムの既定マイク
+
+[stt]
+model = "mlx-community/whisper-large-v3-turbo"   # 軽くしたいなら "mlx-community/whisper-small-mlx"
+language = "ja"
+
+[tts]
+voice = "Kyoko"           # `say -v '?' | grep ja_JP` で一覧。システム設定で Kyoko (拡張) を入れると高音質
+rate = 210
+
+# ---- AI バックエンド ----
+[backends.local]
+type = "ollama"
+model = "qwen3:8b"        # 例: gemma3:12b, qwen3:4b（速い）
+keep_alive = "30m"
+think = false             # true にするとツールの使い分けが正確になるが、返答が数秒遅くなる
+
+[backends.claude]
+type = "anthropic"        # ANTHROPIC_API_KEY が必要（従量課金）
+model = "claude-opus-5"   # 安く速くしたいなら "claude-haiku-4-5" / "claude-sonnet-5"
+effort = "low"            # 音声向けに低遅延。じっくり考えさせたいなら "medium" / "high"
+
+[backends.gpt]
+type = "openai"           # OPENAI_API_KEY が必要（従量課金）
+model = "gpt-5-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[backends.gemini]
+type = "openai"           # Google AI Studio の無料枠で使える
+model = "gemini-2.5-flash"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+api_key_env = "GEMINI_API_KEY"
+
+# OpenAI 互換 API なら何でも追加できる（例: Groq の無料枠）
+# [backends.groq]
+# type = "openai"
+# model = "llama-3.3-70b-versatile"
+# base_url = "https://api.groq.com/openai/v1"
+# api_key_env = "GROQ_API_KEY"
