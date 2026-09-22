@@ -142,9 +142,12 @@ struct AnthropicBackend: LLMBackend {
                 do {
                     var messages: [[String: Any]] = history.map { ["role": $0.role, "content": $0.content] }
                     messages.append(["role": "user", "content": user])
-                    let tools: [[String: Any]] = Tools.allSpecs.map {
+                    var tools: [[String: Any]] = Tools.specsForClaude.map {
                         ["name": $0.name, "description": $0.description, "input_schema": $0.parameters, "eager_input_streaming": true]
                     }
+                    // Claude 内蔵の Web 検索（Anthropic のサーバー側で検索して結果を読む）
+                    tools.append(["type": "web_search_20260209", "name": "web_search", "max_uses": 5,
+                                  "user_location": ["type": "approximate", "country": "JP", "timezone": "Asia/Tokyo"]])
                     let headers = [
                         "x-api-key": apiKey,
                         "anthropic-version": "2023-06-01",
@@ -189,7 +192,7 @@ struct AnthropicBackend: LLMBackend {
                                 }
                                 blocks[index] = block
                             case "content_block_stop":
-                                if blocks[index]?["type"] as? String == "tool_use" {
+                                if ["tool_use", "server_tool_use"].contains(blocks[index]?["type"] as? String) {
                                     let raw = partialJSON[index] ?? ""
                                     blocks[index]?["input"] = raw.isEmpty ? [String: Any]() : (HTTP.json(raw) ?? ["_invalid_json": raw])
                                 }

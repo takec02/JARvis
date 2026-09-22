@@ -31,6 +31,9 @@ enum Tools {
     /// AI に渡すすべてのツール（組み込み＋接続中の MCP サーバーのツール）
     static var allSpecs: [ToolSpec] { specs + MCPManager.shared.toolSpecs }
 
+    /// Claude には内蔵の Web 検索を使わせるため、Tavily 検索を外したもの
+    static var specsForClaude: [ToolSpec] { allSpecs.filter { $0.name != "search_web" } }
+
     static let specs: [ToolSpec] = [
         ToolSpec(name: "get_datetime", description: "現在の日付と時刻を取得する", properties: [:]),
         ToolSpec(name: "open_app", description: "Mac のアプリを起動する。name はアプリ名（例: Safari, Music, Finder, カレンダー）",
@@ -41,10 +44,18 @@ enum Tools {
         ToolSpec(name: "music_control",
                  description: "音楽（ミュージック.app）の再生操作。例:「音楽かけて」→play、「止めて」→pause、「次の曲」「スキップ」→next、「前の曲」→previous",
                  properties: ["action": ["type": "string", "enum": ["play", "pause", "next", "previous"]]]),
-        ToolSpec(name: "web_search", description: "ブラウザで Web 検索を開く（結果は読み上げられない）",
+        ToolSpec(name: "search_web",
+                 description: "インターネットで検索し、上位の結果（タイトル・URL・抜粋）と要約を返す。最新の情報、ニュース、店・イベント・人物など、知識だけでは確かでないことを調べるときに使う。必要なら続けて read_webpage で本文を読む",
                  properties: ["query": ["type": "string"]]),
-        ToolSpec(name: "get_weather", description: "指定した都市の現在の天気を取得する。city はローマ字推奨（例: Tokyo）",
-                 properties: ["city": ["type": "string"]]),
+        ToolSpec(name: "read_webpage", description: "指定した URL の Web ページの本文を読む（最大8000文字）",
+                 properties: ["url": ["type": "string"]]),
+        ToolSpec(name: "open_web_search", description: "ブラウザで検索結果のページを開く（ユーザーが画面で自分で見たいと言ったとき用。内容は読み上げられない）",
+                 properties: ["query": ["type": "string"]]),
+        ToolSpec(name: "get_weather",
+                 description: "日本の天気予報（今日・明日の天気、降水確率、予想気温）を気象庁のデータで取得する。place は都道府県・地方・市区町村名（例: 東京、大阪府、札幌市、横浜）",
+                 properties: ["place": ["type": "string"]]),
+        ToolSpec(name: "open_weathernews", description: "ウェザーニュースの天気ページをブラウザで開く（ユーザーがウェザーニュースで見たいと言ったとき）。place は地名",
+                 properties: ["place": ["type": "string"]]),
         ToolSpec(name: "run_shortcut", description: "macOS のショートカット.app に登録されたショートカットを名前で実行する",
                  properties: ["name": ["type": "string"]]),
     ]
@@ -121,21 +132,25 @@ enum Tools {
             let cmd = ["play": "play", "pause": "pause", "next": "next track", "previous": "previous track"][args["action"] as! String]!
             try appleScript("tell application \"Music\" to \(cmd)")
             return "Music: \(cmd)"
-        case "web_search":
+        case "search_web":
+            return try await WebTools.search(query: args["query"] as! String)
+        case "read_webpage":
+            return try await WebTools.read(urlString: args["url"] as! String)
+        case "open_web_search":
             let q = args["query"] as! String
             var c = URLComponents(string: "https://www.google.com/search")!
             c.queryItems = [URLQueryItem(name: "q", value: q)]
             NSWorkspace.shared.open(c.url!)
             return "ブラウザで「\(q)」を検索しました"
         case "get_weather":
-            let city = args["city"] as! String
-            var c = URLComponents(string: "https://wttr.in/")!
-            c.path = "/" + city
-            c.queryItems = [URLQueryItem(name: "format", value: "%l: %C 気温%t 湿度%h 風%w"), URLQueryItem(name: "lang", value: "ja")]
-            var req = URLRequest(url: c.url!, timeoutInterval: 8)
-            req.setValue("curl", forHTTPHeaderField: "User-Agent")
-            let (data, _) = try await URLSession.shared.data(for: req)
-            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return try await JMAWeather.forecast(place: args["place"] as! String)
+        case "open_weathernews":
+            // 規約で自動取得が禁止されているため、中身は読まずにブラウザで開くだけにする
+            let place = args["place"] as! String
+            var c = URLComponents(string: "https://www.google.com/search")!
+            c.queryItems = [URLQueryItem(name: "q", value: "ウェザーニュース \(place) 天気"), URLQueryItem(name: "btnI", value: "1")]
+            NSWorkspace.shared.open(c.url!)
+            return "ブラウザでウェザーニュースの\(place)の天気を開きました"
         case "run_shortcut":
             let n = args["name"] as! String
             let out = try await shell("/usr/bin/shortcuts", ["run", n], timeout: 60)

@@ -79,6 +79,7 @@ private struct GeneralSettings: View {
 private struct AISettings: View {
     @Environment(AgentController.self) private var agent
     @State private var keys: [BackendKind: String] = [:]
+    @State private var tavilyKey = ""
     @State private var saved = false
 
     var body: some View {
@@ -109,6 +110,17 @@ private struct AISettings: View {
             }
             Section {
                 HStack {
+                    SecureField("API キー", text: $tavilyKey)
+                        .onChange(of: tavilyKey) { saved = false }
+                    Link("取得", destination: URL(string: "https://app.tavily.com")!)
+                }
+            } header: {
+                Text("Web 検索（Tavily）— 月1,000回まで無料")
+            } footer: {
+                Text("ローカル・GPT・Gemini のときに使います。Claude のときは Claude 内蔵の Web 検索（1,000回あたり約10ドル）を使います。")
+            }
+            Section {
+                HStack {
                     Text("API キーは Mac のキーチェーンに保存されます。").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     if saved { Text("保存しました").font(.caption).foregroundStyle(.green) }
@@ -116,6 +128,7 @@ private struct AISettings: View {
                         for (kind, value) in keys {
                             if let account = kind.keychainAccount { Keychain.set(value.trimmingCharacters(in: .whitespacesAndNewlines), for: account) }
                         }
+                        Keychain.set(tavilyKey.trimmingCharacters(in: .whitespacesAndNewlines), for: "tavily")
                         saved = true
                     }
                 }
@@ -126,6 +139,7 @@ private struct AISettings: View {
             for kind in BackendKind.allCases {
                 if let account = kind.keychainAccount { keys[kind] = Keychain.get(account) ?? "" }
             }
+            tavilyKey = Keychain.get("tavily") ?? ""
         }
     }
 
