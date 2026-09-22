@@ -91,6 +91,9 @@ final class AppSettings {
     var quietFromHour: Int { didSet { d.set(quietFromHour, forKey: "quietFromHour") } }
     var quietToHour: Int { didSet { d.set(quietToHour, forKey: "quietToHour") } }
 
+    /// ローカル AI が一度に扱える文脈の広さ（トークン数）。写真を渡すと多く使う
+    var ollamaContext: Int { didSet { d.set(ollamaContext, forKey: "ollamaContext") } }
+
     /// 写真を見て説明してもらうモデル（空なら、入っている画像対応モデルを自動で探す）
     var visionModel: String {
         didSet {
@@ -121,6 +124,7 @@ final class AppSettings {
         // 画像も道具も使える qwen3-vl に一本化した（qwen3:8b は画像を読めない）
         let savedModel = d.string(forKey: "ollamaModel")
         ollamaModel = (savedModel == nil || savedModel == "qwen3:8b") ? "qwen3-vl:8b-instruct" : savedModel!
+        ollamaContext = d.object(forKey: "ollamaContext") as? Int ?? 16384
         visionModel = d.string(forKey: "visionModel") ?? ""
         personalPrompt = d.string(forKey: "personalPrompt") ?? ""
         quietFromHour = d.object(forKey: "quietFromHour") as? Int ?? 22

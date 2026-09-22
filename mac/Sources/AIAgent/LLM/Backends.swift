@@ -162,6 +162,8 @@ struct OllamaBackend: LLMBackend {
                         let body: [String: Any] = [
                             "model": model, "messages": messages, "tools": openAIStyleTools(local: true, query: topicQuery),
                             "stream": true, "think": false, "keep_alive": "30m",
+                            // 既定の 4096 では、写真や長い会話ですぐ足りなくなる
+                            "options": ["num_ctx": AppSettings.shared.ollamaContext],
                         ]
                         let lines: AsyncLineSequence<URLSession.AsyncBytes>
                         do {
@@ -173,7 +175,11 @@ struct OllamaBackend: LLMBackend {
                         var calls: [[String: Any]] = []
                         for try await line in lines {
                             guard let obj = HTTP.json(line) else { continue }
-                            if let err = obj["error"] as? String { throw LLMError(message: err) }
+                            if let err = obj["error"] as? String {
+                                throw LLMError(message: err.contains("exceed_context_size")
+                                    ? "会話が長くなりすぎました（写真は多くの量を使います）。ゴミ箱ボタンで会話を消すか、設定 → AI で「一度に扱える量」を広げてください"
+                                    : err)
+                            }
                             let msg = obj["message"] as? [String: Any] ?? [:]
                             if let c = msg["content"] as? String, !c.isEmpty {
                                 text += c

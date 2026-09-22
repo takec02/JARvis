@@ -26,7 +26,7 @@ final class Camera {
     func look() async throws -> Reading {
         let image = try await Self.capture()
         let (text, codes) = try await Task.detached(priority: .userInitiated) { try Self.analyze(image) }.value
-        guard let jpeg = Self.jpeg(image, maxSide: 1280) else { throw Tools.ToolError(message: "写真を画像にできませんでした") }
+        guard let jpeg = Self.jpeg(image, maxSide: 1024) else { throw Tools.ToolError(message: "写真を画像にできませんでした") }
         lastPhoto = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         lastPhotoAt = Date()
         pendingJPEG = jpeg

@@ -109,6 +109,11 @@ private struct AISettings: View {
             }
             Section("ローカル (Ollama) — 無料") {
                 TextField("モデル", text: $s.ollamaModel)
+                Picker("一度に扱える量", selection: $s.ollamaContext) {
+                    Text("標準（16,384）").tag(16384)
+                    Text("広め（32,768）― 長い会話や写真が多いとき").tag(32768)
+                    Text("最小（8,192）― メモリが少ないとき").tag(8192)
+                }
                 TextField("写真を見るモデル", text: $s.visionModel, prompt: Text("空欄なら自動（gemma3 など、画像を読めるモデルを探す）"))
                 Text("会話に使うモデルが画像を読めないとき、写真だけをこのモデルに見せて説明してもらいます。写真は Mac の外に出ません。")
                     .font(.caption).foregroundStyle(.secondary)
