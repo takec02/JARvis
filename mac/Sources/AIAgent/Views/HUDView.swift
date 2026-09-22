@@ -264,6 +264,7 @@ struct HUDView: View {
                     .padding(.vertical, compact ? 4 : 10)
                 FlowingLog(entries: agent.entries, name: s.agentName, tint: tint, maxItems: compact ? 5 : 7)
                     .frame(maxHeight: .infinity)
+                if let q = agent.pendingConfirmation { confirmBar(q, tint: tint) }
                 if showInput { inputField(tint: tint) }
                 controls(tint: tint)
             }
@@ -320,6 +321,31 @@ struct HUDView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.3))
         }
+    }
+
+    /// 書き込み前の確認（声でも答えられる）
+    private func confirmBar(_ question: String, tint: Color) -> some View {
+        VStack(spacing: 10) {
+            Text(question)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.9))
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                Button("やめる") { agent.resolveConfirmation(false) }
+                    .buttonStyle(.bordered)
+                Button("実行する") { agent.resolveConfirmation(true) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(tint)
+            }
+            Text("「はい」「いいえ」と声でも答えられます")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.4))
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.6), lineWidth: 0.8))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
     }
 
     private func inputField(tint: Color) -> some View {

@@ -15,6 +15,8 @@ struct OAuthConfig: Codable, Equatable {
     var tokenUrl: String?
     /// ログイン後に戻ってくる先のポート。Google Cloud に http://127.0.0.1:<port>/oauth2callback を登録しておく
     var redirectPort: Int?
+    /// MCP 標準のログインで、アクセス先のサーバーを示す値（RFC 8707 の resource）
+    var resource: String?
 
     var authorizeURL: String { authorizeUrl ?? "https://accounts.google.com/o/oauth2/v2/auth" }
     var tokenURL: String { tokenUrl ?? "https://oauth2.googleapis.com/token" }
@@ -114,9 +116,11 @@ final class OAuthManager {
             .init(name: "code_challenge", value: challenge),
             .init(name: "code_challenge_method", value: "S256"),
             .init(name: "state", value: state),
-            .init(name: "access_type", value: "offline"),  // 更新用のトークンをもらう
+            .init(name: "access_type", value: "offline"),  // 更新用のトークンをもらう（Google 向け）
             .init(name: "prompt", value: "consent"),
         ]
+        if config.scopes.isEmpty { c.queryItems?.removeAll { $0.name == "scope" } }
+        if let r = config.resource { c.queryItems?.append(.init(name: "resource", value: r)) }
         let receiver = try LoopbackReceiver(port: config.port)
         NSWorkspace.shared.open(c.url!)
         let params = try await receiver.waitForCallback(timeout: 300)
@@ -138,7 +142,8 @@ final class OAuthManager {
     private func tokenRequest(_ config: OAuthConfig, _ fields: [String: String]) async throws -> [String: Any] {
         var all = fields
         all["client_id"] = config.clientId
-        if let s = config.clientSecret { all["client_secret"] = s }
+        if let r = config.resource { all["resource"] = r }
+        if let s = config.clientSecret { all["client_secret"] = SecretRef.resolve(s) }
         var req = URLRequest(url: URL(string: config.tokenURL)!, timeoutInterval: 20)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -228,5 +233,75 @@ final class LoopbackReceiver: @unchecked Sendable {
         guard let cont else { return }
         listener.cancel()
         cont.resume(with: result)
+    }
+}
+
+/// MCP 標準のログイン設定の自動検出と、アプリの自動登録（RFC 9728 / RFC 8414 / RFC 7591）。
+/// これに対応した MCP サーバーなら、URL を入れるだけでログインできる
+enum OAuthDiscovery {
+    /// clientId を渡したときは自動登録をせず、そのアプリでログインする（Slack・HubSpot など、事前にアプリを作る方式）
+    static func discover(serverURL: URL, redirectURI: String, clientId: String? = nil, clientSecret: String? = nil) async throws -> OAuthConfig {
+        guard let host = serverURL.host, let scheme = serverURL.scheme else { throw OAuthError(message: "URL が正しくありません") }
+        let origin = "\(scheme)://\(host)\(serverURL.port.map { ":\($0)" } ?? "")"
+        let path = serverURL.path == "/" ? "" : serverURL.path
+
+        // 1) サーバーが案内する認可サーバーを調べる（なければサーバー自身）
+        var authServer = origin
+        var scopes: [String] = []
+        for candidate in ["\(origin)/.well-known/oauth-protected-resource\(path)", "\(origin)/.well-known/oauth-protected-resource"] {
+            if let meta = try? await getJSON(candidate) {
+                if let first = (meta["authorization_servers"] as? [String])?.first { authServer = first }
+                scopes = meta["scopes_supported"] as? [String] ?? []
+                break
+            }
+        }
+
+        // 2) 認可サーバーの設定（ログイン画面・トークン・アプリ登録の URL）
+        let asURL = URL(string: authServer)!
+        let asOrigin = "\(asURL.scheme ?? "https")://\(asURL.host ?? "")\(asURL.port.map { ":\($0)" } ?? "")"
+        let asPath = asURL.path == "/" ? "" : asURL.path
+        var meta: [String: Any]?
+        for candidate in ["\(asOrigin)/.well-known/oauth-authorization-server\(asPath)", "\(asOrigin)/.well-known/oauth-authorization-server",
+                          "\(asOrigin)/.well-known/openid-configuration\(asPath)"] {
+            if let m = try? await getJSON(candidate) { meta = m; break }
+        }
+        guard let meta, let authorize = meta["authorization_endpoint"] as? String, let token = meta["token_endpoint"] as? String else {
+            throw OAuthError(message: "このサーバーのログイン方式を見つけられませんでした")
+        }
+        if let clientId, !clientId.isEmpty {
+            return OAuthConfig(clientId: clientId, clientSecret: (clientSecret?.isEmpty ?? true) ? nil : clientSecret, scopes: scopes,
+                               authorizeUrl: authorize, tokenUrl: token, resource: serverURL.absoluteString)
+        }
+        guard let registration = meta["registration_endpoint"] as? String else {
+            throw OAuthError(message: "このサーバーはアプリの自動登録に対応していません（サービス側でアプリを作り、クライアント ID を入れる必要があります）")
+        }
+
+        // 3) AIエージェントをアプリとして登録する
+        var req = URLRequest(url: URL(string: registration)!, timeoutInterval: 20)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [
+            "client_name": "AIエージェント",
+            "redirect_uris": [redirectURI],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        ])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let reg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard let clientId = reg["client_id"] as? String else {
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            throw OAuthError(message: "アプリの自動登録を断られました（HTTP \(code)）。このサーバーは決められたアプリからしか使えない可能性があります")
+        }
+        return OAuthConfig(clientId: clientId, clientSecret: reg["client_secret"] as? String, scopes: scopes,
+                           authorizeUrl: authorize, tokenUrl: token, resource: serverURL.absoluteString)
+    }
+
+    private static func getJSON(_ url: String) async throws -> [String: Any] {
+        guard let u = URL(string: url) else { throw OAuthError(message: "bad url") }
+        let (data, resp) = try await URLSession.shared.data(for: URLRequest(url: u, timeoutInterval: 10))
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw OAuthError(message: "not found") }
+        return obj
     }
 }

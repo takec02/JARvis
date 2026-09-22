@@ -315,6 +315,8 @@ private struct MCPSettings: View {
                 Text("接続したサーバーのツールは、どの AI からも使えます。未接続のサーバーには1分ごとにつなぎ直します。")
             }
             GoogleSetupSection()
+            BusinessServicesSection()
+            OtherServicesSection()
             if !mcp.oauthConfigs.isEmpty {
                 Section("ログイン") {
                     ForEach(mcp.oauthConfigs.keys.sorted(), id: \.self) { name in
@@ -439,6 +441,204 @@ private struct GoogleSetupSection: View {
             Text("Google を追加")
         } footer: {
             Link("準備の手順（Google Cloud の設定）", destination: URL(string: "https://github.com/takec02/ai-agent-mac/blob/main/docs/google-setup.md")!)
+        }
+    }
+
+    private func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// Backlog・kintone・Salesforce を連携先に追加するフォーム（各社公式の MCP サーバー）
+private struct BusinessServicesSection: View {
+    @State private var mcp = MCPManager.shared
+    @State private var backlogDomain = ""
+    @State private var backlogKey = ""
+    @State private var kintoneURL = ""
+    @State private var kintoneToken = ""
+    @State private var kintoneUser = ""
+    @State private var kintonePassword = ""
+    @State private var sfServerURL = ""
+    @State private var sfDomain = ""
+    @State private var sfClientId = ""
+    @State private var sfSecret = ""
+    @State private var message: String?
+
+    var body: some View {
+        Section {
+            DisclosureGroup("Backlog") {
+                TextField("スペースのドメイン", text: $backlogDomain, prompt: Text("例: example.backlog.com"))
+                SecureField("API キー", text: $backlogKey)
+                Button("追加する") {
+                    run("Backlog を追加しました。") { try await mcp.addBacklog(domain: trim(backlogDomain), apiKey: trim(backlogKey)) }
+                }
+                .disabled(trim(backlogDomain).isEmpty || trim(backlogKey).isEmpty)
+                note("API キーは Backlog の「個人設定 → API」で発行します。課題の登録・更新などの書き込みは、実行前に確認します。")
+            }
+            DisclosureGroup("kintone") {
+                TextField("kintone の URL", text: $kintoneURL, prompt: Text("例: https://example.cybozu.com"))
+                SecureField("API トークン（複数ならカンマ区切り）", text: $kintoneToken)
+                TextField("または ログイン名", text: $kintoneUser)
+                SecureField("パスワード", text: $kintonePassword)
+                Button("追加する") {
+                    run("kintone を追加しました。") {
+                        try await mcp.addKintone(baseURL: trim(kintoneURL), apiToken: trim(kintoneToken), username: trim(kintoneUser), password: kintonePassword)
+                    }
+                }
+                .disabled(trim(kintoneURL).isEmpty || (trim(kintoneToken).isEmpty && trim(kintoneUser).isEmpty))
+                note("API トークンは、使うアプリの「設定 → API トークン」で発行します（そのアプリだけに権限を絞れるのでおすすめ）。レコードの追加・更新・削除などは、実行前に確認します。")
+            }
+            DisclosureGroup("Salesforce") {
+                TextField("MCP サーバーの URL", text: $sfServerURL, prompt: Text("Salesforce の設定画面に表示される URL"))
+                TextField("My Domain", text: $sfDomain, prompt: Text("例: example.my.salesforce.com"))
+                TextField("コンシューマ鍵（クライアント ID）", text: $sfClientId)
+                SecureField("コンシューマの秘密（任意）", text: $sfSecret)
+                Button("追加する") {
+                    run("Salesforce を追加しました。下の「ログイン」から Salesforce にログインしてください。") {
+                        try await mcp.addSalesforce(serverURL: trim(sfServerURL), myDomain: trim(sfDomain), clientId: trim(sfClientId), clientSecret: trim(sfSecret))
+                    }
+                }
+                .disabled(trim(sfServerURL).isEmpty || trim(sfDomain).isEmpty || trim(sfClientId).isEmpty)
+                note("Enterprise Edition 以上、または無料の Developer Edition で使えます。管理者が「設定 → API カタログ → MCP サーバー」でサーバーを有効にし、外部クライアントアプリ（スコープ mcp_api と refresh_token、PKCE 有効、コールバック URL http://127.0.0.1:8723/oauth2callback）を作ってください。")
+            }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+        } header: {
+            Text("業務サービスを追加")
+        } footer: {
+            Text("API キーやパスワードは Mac のキーチェーンに保存され、設定ファイルには書かれません。初回の起動時に、各社の MCP サーバーを自動でダウンロードします（Node.js が必要）。")
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary)
+    }
+
+    private func run(_ done: String, _ action: @escaping () async throws -> Void) {
+        Task {
+            do { try await action(); message = done } catch { message = error.localizedDescription }
+        }
+    }
+
+    private func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// Notion・Slack・GitHub などを追加するフォーム（各社公式のリモート MCP サーバー）
+private struct OtherServicesSection: View {
+    enum Kind: String, CaseIterable, Identifiable {
+        case notion, slack, github, freee, hubspot, zapier, figma, custom
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .notion: "Notion"
+            case .slack: "Slack"
+            case .github: "GitHub"
+            case .freee: "freee"
+            case .hubspot: "HubSpot"
+            case .zapier: "Zapier"
+            case .figma: "Figma（デスクトップ版）"
+            case .custom: "その他（URL を指定）"
+            }
+        }
+        var url: String {
+            switch self {
+            case .notion: "https://mcp.notion.com/mcp"
+            case .slack: "https://mcp.slack.com/mcp"
+            case .github: "https://api.githubcopilot.com/mcp/"
+            case .freee: "https://mcp.freee.co.jp/mcp"
+            case .hubspot: "https://mcp.hubspot.com/"
+            case .zapier: "https://mcp.zapier.com/api/v1/connect"
+            case .figma: "http://127.0.0.1:3845/mcp"
+            case .custom: ""
+            }
+        }
+        /// 入力が必要なもの
+        var needsClient: Bool { self == .slack || self == .hubspot }
+        var needsToken: Bool { self == .github || self == .zapier }
+        var needsLogin: Bool { [.notion, .freee, .slack, .hubspot].contains(self) }
+        var note: String {
+            switch self {
+            case .notion: "「追加する」のあと、下の「ログイン」から Notion にログインします（アプリの登録は自動）。"
+            case .freee: "「追加する」のあと、下の「ログイン」から freee にログインします（アプリの登録は自動）。使える機能は契約プランと権限によります。"
+            case .slack: "Slack の管理画面でアプリを作り（社内アプリとして、ワークスペース管理者の承認が必要）、リダイレクト URL に http://127.0.0.1:8723/oauth2callback を登録して、クライアント ID とシークレットを入れてください。"
+            case .hubspot: "HubSpot の開発者設定で「MCP auth app」を作り、リダイレクト URL に http://127.0.0.1:8723/oauth2callback を登録して、クライアント ID とシークレットを入れてください。"
+            case .github: "GitHub の「Settings → Developer settings → Personal access tokens」でトークンを作って入れてください（必要なリポジトリと権限だけに絞るのがおすすめ）。"
+            case .zapier: "Zapier の MCP 設定画面で発行される接続トークンを入れてください。アクションの実行は、Zapier のプランのタスク数を使います。"
+            case .figma: "Figma デスクトップ版の「Preferences → Enable Dev Mode MCP Server」をオンにしてください（有料プランの Dev または Full の席が必要）。Figma を起動している間だけつながります。"
+            case .custom: "MCP 標準のログイン（自動登録）に対応したサーバーなら、URL だけでつながります。"
+            }
+        }
+    }
+
+    @State private var mcp = MCPManager.shared
+    @State private var kind: Kind = .notion
+    @State private var customName = ""
+    @State private var customURL = ""
+    @State private var customLogin = true
+    @State private var clientId = ""
+    @State private var clientSecret = ""
+    @State private var token = ""
+    @State private var localOnly = false
+    @State private var working = false
+    @State private var message: String?
+
+    var body: some View {
+        Section {
+            Picker("サービス", selection: $kind) {
+                ForEach(Kind.allCases) { Text($0.label).tag($0) }
+            }
+            .onChange(of: kind) { message = nil }
+            if kind == .custom {
+                TextField("名前（英数字）", text: $customName, prompt: Text("例: mytool"))
+                TextField("MCP サーバーの URL", text: $customURL, prompt: Text("https://..."))
+                Toggle("ログインが必要", isOn: $customLogin)
+            }
+            if kind.needsClient {
+                TextField("クライアント ID", text: $clientId)
+                SecureField("クライアント シークレット", text: $clientSecret)
+            }
+            if kind.needsToken {
+                SecureField(kind == .github ? "個人用アクセストークン" : "接続トークン", text: $token)
+            }
+            Toggle("ローカル AI 専用にする", isOn: $localOnly)
+            HStack {
+                Button(working ? "追加中…" : "追加する", action: add).disabled(working || !ready)
+                Spacer()
+            }
+            Text(kind.note).font(.caption).foregroundStyle(.secondary)
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+        } header: {
+            Text("ほかのサービスを追加")
+        } footer: {
+            Text("書き込み（メッセージ送信・ページ作成・課題登録など）は、実行前に声か画面で確認します。")
+        }
+    }
+
+    private var ready: Bool {
+        switch kind {
+        case .custom: return !trim(customName).isEmpty && !trim(customURL).isEmpty
+        case .slack, .hubspot: return !trim(clientId).isEmpty
+        case .github, .zapier: return !trim(token).isEmpty
+        default: return true
+        }
+    }
+
+    private func add() {
+        let name = kind == .custom ? trim(customName).lowercased() : kind.rawValue
+        let url = kind == .custom ? trim(customURL) : kind.url
+        let needsLogin = kind == .custom ? customLogin : kind.needsLogin
+        working = true
+        Task {
+            defer { working = false }
+            do {
+                try await mcp.addRemoteServer(name: name, url: url, needsLogin: needsLogin,
+                                              clientId: kind.needsClient ? trim(clientId) : nil,
+                                              clientSecret: kind.needsClient ? trim(clientSecret) : nil,
+                                              bearerToken: kind.needsToken ? trim(token) : nil,
+                                              localOnly: localOnly)
+                message = needsLogin ? "追加しました。下の「ログイン」の欄にある「\(name)」の「ログイン」を押してください。" : "追加しました。"
+                clientSecret = ""
+                token = ""
+            } catch {
+                message = error.localizedDescription
+            }
         }
     }
 

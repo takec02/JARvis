@@ -29,6 +29,24 @@ struct MCPServerConfig: Codable, Equatable {
     var oauth: String?
 }
 
+/// 設定ファイルの値のうち "keychain:<名前>" と書いたものは、キーチェーンから読んで使う（API キーを平文で書かないため）
+enum SecretRef {
+    static let prefix = "keychain:"
+
+    static func resolve(_ value: String) -> String {
+        // "keychain:名前" だけでなく、"Bearer keychain:名前" のように途中にあっても置き換える
+        guard let r = value.range(of: prefix) else { return value }
+        let account = String(value[r.upperBound...])
+        return String(value[..<r.lowerBound]) + (Keychain.get(account) ?? "")
+    }
+
+    /// 秘密の値をキーチェーンに保存し、設定ファイルに書く参照文字列を返す
+    static func store(_ value: String, account: String) -> String {
+        Keychain.set(value, for: account)
+        return prefix + account
+    }
+}
+
 struct MCPConfigFile: Codable {
     var mcpServers: [String: MCPServerConfig]
     /// ブラウザでログインする MCP サーバー用の設定。複数のサーバーで1つのログインを共有できる
@@ -237,7 +255,9 @@ final class MCPManager {
             var oauth = file.oauth ?? [:]
             var scopes: [String] = []
             for sc in chosen.flatMap(\.scopes) where !scopes.contains(sc) { scopes.append(sc) }
-            oauth["google-work"] = OAuthConfig(clientId: clientId, clientSecret: clientSecret.isEmpty ? nil : clientSecret, scopes: scopes)
+            oauth["google-work"] = OAuthConfig(clientId: clientId,
+                                               clientSecret: clientSecret.isEmpty ? nil : SecretRef.store(clientSecret, account: "mcp.google-work.secret"),
+                                               scopes: scopes)
             file.oauth = oauth
         }
     }
@@ -249,10 +269,112 @@ final class MCPManager {
                 command: "uvx",
                 args: ["workspace-mcp", "--single-user", "--tool-tier", "core", "--permissions",
                        "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly", "slides:readonly"],
-                env: ["GOOGLE_OAUTH_CLIENT_ID": clientId, "GOOGLE_OAUTH_CLIENT_SECRET": clientSecret,
+                env: ["GOOGLE_OAUTH_CLIENT_ID": clientId,
+                      "GOOGLE_OAUTH_CLIENT_SECRET": SecretRef.store(clientSecret, account: "mcp.google-personal.secret"),
                       "USER_GOOGLE_EMAIL": email, "OAUTHLIB_INSECURE_TRANSPORT": "1"],
                 localOnly: localOnly ? true : nil)
         }
+    }
+
+    // MARK: 業務サービスの追加（設定画面から）
+
+    /// Backlog（ヌーラボ公式の MCP サーバー）
+    func addBacklog(domain: String, apiKey: String) async throws {
+        let host = domain.replacingOccurrences(of: "https://", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        try await updateConfigFile { file in
+            file.mcpServers["backlog"] = MCPServerConfig(
+                command: "npx", args: ["-y", "backlog-mcp-server"],
+                env: ["BACKLOG_DOMAIN": host,
+                      "BACKLOG_API_KEY": SecretRef.store(apiKey, account: "mcp.backlog.apikey"),
+                      "ENABLE_TOOLSETS": "space,project,issue,wiki,notifications,document"])
+        }
+    }
+
+    /// kintone（サイボウズ公式の MCP サーバー）。API トークンか、ログイン名とパスワードのどちらか
+    func addKintone(baseURL: String, apiToken: String, username: String, password: String) async throws {
+        var env = ["KINTONE_BASE_URL": baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))]
+        if !apiToken.isEmpty { env["KINTONE_API_TOKEN"] = SecretRef.store(apiToken, account: "mcp.kintone.token") }
+        if !username.isEmpty {
+            env["KINTONE_USERNAME"] = username
+            env["KINTONE_PASSWORD"] = SecretRef.store(password, account: "mcp.kintone.password")
+        }
+        try await updateConfigFile { file in
+            file.mcpServers["kintone"] = MCPServerConfig(command: "npx", args: ["-y", "@kintone/mcp-server"], env: env)
+        }
+    }
+
+    /// Salesforce（Salesforce が提供する Hosted MCP サーバー）。ログインはブラウザで
+    func addSalesforce(serverURL: String, myDomain: String, clientId: String, clientSecret: String) async throws {
+        let base = "https://" + myDomain.replacingOccurrences(of: "https://", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        try await updateConfigFile { file in
+            file.mcpServers["salesforce"] = MCPServerConfig(url: serverURL, oauth: "salesforce")
+            var oauth = file.oauth ?? [:]
+            oauth["salesforce"] = OAuthConfig(
+                clientId: clientId,
+                clientSecret: clientSecret.isEmpty ? nil : SecretRef.store(clientSecret, account: "mcp.salesforce.secret"),
+                scopes: ["mcp_api", "refresh_token"],
+                authorizeUrl: base + "/services/oauth2/authorize",
+                tokenUrl: base + "/services/oauth2/token")
+            file.oauth = oauth
+        }
+    }
+
+    /// URL だけで MCP サーバーを追加する。ログインが必要なら、標準の自動検出と自動登録を試す
+    func addRemoteServer(name: String, url: String, needsLogin: Bool, clientId: String? = nil, clientSecret: String? = nil,
+                         bearerToken: String? = nil, localOnly: Bool = false) async throws {
+        guard let u = URL(string: url), u.scheme == "https" || u.host == "127.0.0.1" || u.host == "localhost" else {
+            throw OAuthError(message: "https の URL を入れてください")
+        }
+        var oauthConfig: OAuthConfig?
+        if needsLogin {
+            var oc = try await OAuthDiscovery.discover(serverURL: u, redirectURI: OAuthConfig(clientId: "", scopes: []).redirectURI,
+                                                       clientId: clientId, clientSecret: clientSecret)
+            if let secret = oc.clientSecret { oc.clientSecret = SecretRef.store(secret, account: "mcp.\(name).secret") }
+            oauthConfig = oc
+        }
+        try await updateConfigFile { file in
+            var headers: [String: String]?
+            if let bearerToken, !bearerToken.isEmpty {
+                headers = ["Authorization": "Bearer " + SecretRef.store(bearerToken, account: "mcp.\(name).token")]
+            }
+            file.mcpServers[name] = MCPServerConfig(url: url, headers: headers, localOnly: localOnly ? true : nil,
+                                                    oauth: oauthConfig == nil ? nil : name)
+            if let oauthConfig {
+                var oauth = file.oauth ?? [:]
+                oauth[name] = oauthConfig
+                file.oauth = oauth
+            }
+        }
+    }
+
+    // MARK: 書き込み前の確認
+
+    /// 書き込み系のツールか（読むだけと明示されていれば不要。削除などの破壊的な操作や、名前が書き込みを表すものは確認する）
+    private func needsConfirmation(_ tool: MCP.Tool) -> Bool {
+        if tool.annotations.readOnlyHint == true { return false }
+        if tool.annotations.destructiveHint == true { return true }
+        let n = tool.name.lowercased()
+        let verbs = ["add", "create", "update", "delete", "remove", "post", "send", "deploy", "move", "edit", "write",
+                     "insert", "upload", "comment", "close", "merge", "manage", "modify", "set_", "set-", "put", "patch", "draft"]
+        return verbs.contains { n.contains($0) }
+    }
+
+    /// 確認のために読み上げる説明（ツール名と、主な引数）
+    private func describe(server: String, tool: MCP.Tool, args: [String: Value]) -> String {
+        let label = server == "yuhitsu" ? "右筆" : server
+        let action = tool.annotations.title ?? tool.title ?? tool.name
+        let keys = ["summary", "title", "subject", "name", "content", "description", "record", "records", "body", "to", "app"]
+        let details = keys.compactMap { k -> String? in
+            guard let v = args[k] else { return nil }
+            let text: String
+            switch v {
+            case .string(let s): text = s
+            default: text = (try? String(data: JSONSerialization.data(withJSONObject: Self.toAny(v)), encoding: .utf8)) ?? ""
+            }
+            return text.isEmpty ? nil : String(text.prefix(60))
+        }
+        let detail = details.isEmpty ? "" : "内容は「\(details.prefix(2).joined(separator: "、"))」です。"
+        return "\(label)で\(action)を実行します。\(detail)よろしいですか？"
     }
 
     // MARK: 接続
@@ -326,14 +448,14 @@ final class MCPManager {
             struct Discovery: Decodable { let url: String; let token: String? }
             let d = try JSONDecoder().decode(Discovery.self, from: data)
             guard let url = URL(string: d.url) else { throw MCPSetupError("接続情報の URL が不正です") }
-            var headers = config.headers ?? [:]
+            var headers = (config.headers ?? [:]).mapValues(SecretRef.resolve)
             if let token = d.token { headers["Authorization"] = "Bearer \(token)" }
             return (url, headers)
         }
         guard let s = config.url, let url = URL(string: s) else {
             throw MCPSetupError("command か url を指定してください")
         }
-        return (url, config.headers ?? [:])
+        return (url, (config.headers ?? [:]).mapValues(SecretRef.resolve))
     }
 
     /// コマンドを起動し、標準入出力で MCP を話す
@@ -349,7 +471,7 @@ final class MCPManager {
         // GUI アプリは PATH が最小限なので、Homebrew などの場所を足す
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (environment["PATH"] ?? "")
-        env.forEach { environment[$0] = $1 }
+        env.forEach { environment[$0] = SecretRef.resolve($1) }
         p.environment = environment
         let toServer = Pipe(), fromServer = Pipe()
         p.standardInput = toServer
@@ -431,6 +553,12 @@ final class MCPManager {
             args = obj.mapValues(Self.toValue)
         } else if let d = arguments as? [String: Any] {
             args = d.mapValues(Self.toValue)
+        }
+        if let spec = c.tools.first(where: { $0.name == tool }), needsConfirmation(spec) {
+            let ok = await AgentController.shared.confirm(describe(server: server, tool: spec, args: args))
+            if !ok {
+                return ("ユーザーが実行を取りやめました。実行していないことを伝えてください", true)
+            }
         }
         let finalArgs = args
         Log.write("MCP call: \(server) / \(tool)")  // 引数や結果（メール本文など）は記録しない

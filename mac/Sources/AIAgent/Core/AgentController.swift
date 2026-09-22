@@ -54,6 +54,10 @@ final class AgentController {
     /// マイクの音量 (0〜1)。画面のアニメーションに使う
     private(set) var level: Double = 0
 
+    /// 書き込み前の確認中の質問（画面に「実行する／やめる」を出す）
+    private(set) var pendingConfirmation: String?
+    private var confirmContinuation: CheckedContinuation<Bool, Never>?
+
     /// 会議の記録（画面の REC 表示にも使う）
     let meeting = MeetingRecorder()
 
@@ -139,6 +143,11 @@ final class AgentController {
         guard state == .idle || state == .listening else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // 書き込みの確認中は、返事（はい／いいえ）だけを受け付ける
+        if confirmContinuation != nil {
+            if isFinal { answerConfirmation(text: trimmed) }
+            return
+        }
         // 会議の記録中は、マイクで聞き取った確定文を「自分」の発言として残す
         if isFinal, meeting.isRecording { meeting.add(speaker: "自分", text: trimmed) }
         liveText = trimmed
@@ -306,6 +315,45 @@ final class AgentController {
         state = .speaking
         speaker.say(text)
         await speaker.waitUntilIdle()
+    }
+
+    // MARK: 書き込み前の確認
+
+    /// 書き込み系のツールを実行する前に、声（または画面のボタン）で確認する。20秒答えがなければ中止
+    func confirm(_ question: String) async -> Bool {
+        guard confirmContinuation == nil else { return false }
+        await speaker.waitUntilIdle()
+        entries.append(ConversationEntry(role: "system", text: "確認: \(question)"))
+        await speakAndWait(question)
+        pendingConfirmation = question
+        state = .listening
+        listener.muted = false
+        let result = await withCheckedContinuation { cont in
+            confirmContinuation = cont
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(20))
+                self?.resolveConfirmation(false, note: "返事がなかったので中止しました")
+            }
+        }
+        listener.muted = true
+        state = .thinking
+        return result
+    }
+
+    /// 画面のボタンから答える
+    func resolveConfirmation(_ ok: Bool, note: String? = nil) {
+        guard let cont = confirmContinuation else { return }
+        confirmContinuation = nil
+        pendingConfirmation = nil
+        entries.append(ConversationEntry(role: "system", text: note ?? (ok ? "→ 実行します" : "→ 中止しました")))
+        cont.resume(returning: ok)
+    }
+
+    private func answerConfirmation(text: String) {
+        let yes = ["はい", "お願い", "実行", "いいよ", "いいです", "オッケー", "ok", "どうぞ", "うん", "ええ", "やって", "頼む"]
+        let no = ["いいえ", "やめ", "中止", "キャンセル", "だめ", "ダメ", "ストップ", "いらない", "待って", "違う"]
+        let t = text.lowercased()
+        if no.contains(where: t.contains) { resolveConfirmation(false) } else if yes.contains(where: t.contains) { resolveConfirmation(true) }
     }
 
     // MARK: 会議の記録

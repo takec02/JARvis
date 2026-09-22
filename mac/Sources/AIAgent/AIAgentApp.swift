@@ -104,6 +104,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // 動作確認用: `AIAgent --discover-selftest <URL>...` でログイン方式の自動検出だけを試す（アプリ登録はしない）
+        if let k = args.firstIndex(of: "--discover-selftest") {
+            Task { @MainActor in
+                for u in args[(k + 1)...] {
+                    do {
+                        let oc = try await OAuthDiscovery.discover(serverURL: URL(string: u)!, redirectURI: "http://127.0.0.1:8723/oauth2callback", clientId: "dummy")
+                        print("\(u)\n  authorize=\(oc.authorizeURL)\n  token=\(oc.tokenURL)\n  scopes=\(oc.scopes)")
+                    } catch {
+                        print("\(u)\n  error: \(error.localizedDescription)")
+                    }
+                }
+                exit(0)
+            }
+            return
+        }
         guard let i = args.firstIndex(of: "--mcp-selftest") else { return }
         Task { @MainActor in
             let mcp = MCPManager.shared
