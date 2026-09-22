@@ -9,7 +9,11 @@ import System
 ///         "yuhitsu": { "discovery": "~/Library/Application Support/Yuhitsu/mcp.json" },
 ///         "files":   { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"] },
 ///         "remote":  { "url": "http://127.0.0.1:8080/mcp", "headers": { "Authorization": "Bearer ..." } },
-///         "off":     { "command": "...", "disabled": true } } }
+///         "off":     { "command": "...", "disabled": true },
+///         "private": { "command": "...", "localOnly": true } } }
+///
+/// `localOnly: true` のサーバーのツールは、AI がローカル（Ollama）のときだけ使える。
+/// メールなど、Mac の外に出したくないデータを扱うサーバー向け（右筆は既定で true）。
 struct MCPServerConfig: Codable, Equatable {
     var command: String?
     var args: [String]?
@@ -19,6 +23,7 @@ struct MCPServerConfig: Codable, Equatable {
     /// 接続情報（`{"url": ..., "token": ...}`）を書き出したファイル。起動中のアプリが公開する MCP サーバー向け
     var discovery: String?
     var disabled: Bool?
+    var localOnly: Bool?
 }
 
 struct MCPConfigFile: Codable {
@@ -69,8 +74,26 @@ final class MCPManager {
     // MARK: 設定ファイル
 
     private static let defaultConfig = MCPConfigFile(mcpServers: [
-        "yuhitsu": MCPServerConfig(discovery: "~/Library/Application Support/Yuhitsu/mcp.json"),
+        "yuhitsu": MCPServerConfig(discovery: "~/Library/Application Support/Yuhitsu/mcp.json", localOnly: true),
     ])
+
+    /// ローカル AI 専用のサーバーか（右筆は、設定ファイルに書かれていなくても既定でローカル専用）
+    func isLocalOnly(_ server: String) -> Bool {
+        configs[server]?.localOnly ?? (server == "yuhitsu")
+    }
+
+    /// ローカル専用のサーバーに接続中か
+    var hasLocalOnlyConnected: Bool {
+        connections.keys.contains { isLocalOnly($0) }
+    }
+
+    /// 直近の応答でローカル専用のツールを使ったか（使ったやりとりは、クラウドの AI に渡す履歴から外す）
+    private var localOnlyUsed = false
+
+    func consumeLocalOnlyUsage() -> Bool {
+        defer { localOnlyUsed = false }
+        return localOnlyUsed
+    }
 
     /// 設定ファイルがなければ、右筆を登録した初期設定を作る
     func ensureConfigFile() {
@@ -240,10 +263,10 @@ final class MCPManager {
         return String(cleaned.prefix(64))
     }
 
-    /// AI に渡すツール定義（組み込みツールと同じ形式）
-    var toolSpecs: [ToolSpec] {
+    /// AI に渡すツール定義（組み込みツールと同じ形式）。クラウドの AI にはローカル専用のサーバーのツールを見せない
+    func toolSpecs(includeLocalOnly: Bool) -> [ToolSpec] {
         serverNames.flatMap { name -> [ToolSpec] in
-            guard let c = connections[name] else { return [] }
+            guard let c = connections[name], includeLocalOnly || !isLocalOnly(name) else { return [] }
             return c.tools.map { t in
                 var schema = Self.toAny(t.inputSchema) as? [String: Any] ?? [:]
                 schema.removeValue(forKey: "$schema")
@@ -263,9 +286,16 @@ final class MCPManager {
     }
 
     /// MCP ツールを呼び出し、テキストにして返す
-    func call(_ toolName: String, arguments: Any?) async -> (String, Bool) {
+    func call(_ toolName: String, arguments: Any?, localAllowed: Bool) async -> (String, Bool) {
         guard let (server, tool) = toolIndex[toolName], let c = connections[server] else {
             return ("エラー: ツール \(toolName) は現在使えません", true)
+        }
+        if isLocalOnly(server) {
+            // 念のため実行時にも確認する（ツール一覧から外していても、呼ばれたら拒否する）
+            guard localAllowed else {
+                return ("エラー: このツールはデータを Mac の外に出さないため、AI がローカルのときだけ使えます。AI をローカルに切り替えるよう伝えてください", true)
+            }
+            localOnlyUsed = true
         }
         var args: [String: Value] = [:]
         if let s = arguments as? String, let obj = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {

@@ -83,7 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let (out, isError) = await Tools.execute(name: args[i + 1], arguments: args[i + 2])
                 print("call \(args[i + 1]) → error=\(isError)\n\(out)")
             }
-            print("specs: \(Tools.allSpecs.count)")
+            print("specs: local=\(Tools.specs(local: true).count) cloud=\(Tools.specs(local: false).count)")
+            if args.count > i + 2, mcp.handles(args[i + 1]) {
+                let (out, isError) = await mcp.call(args[i + 1], arguments: args[i + 2], localAllowed: false)
+                print("cloud call → error=\(isError) \(out.prefix(80))")
+            }
             exit(0)
         }
     }

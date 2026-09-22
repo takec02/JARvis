@@ -28,13 +28,17 @@ struct ToolSpec {
 
 @MainActor
 enum Tools {
-    /// AI に渡すすべてのツール（組み込み＋接続中の MCP サーバーのツール）
-    static var allSpecs: [ToolSpec] { specs + MCPManager.shared.toolSpecs }
+    /// AI に渡すツール（組み込み＋接続中の MCP サーバーのツール）
+    /// - local: AI がローカル（Ollama）か。クラウドの AI にはローカル専用の MCP ツールを渡さない
+    /// - tavily: Tavily の検索を含めるか（Claude は内蔵の Web 検索を使うので含めない）
+    static func specs(local: Bool, tavily: Bool = true) -> [ToolSpec] {
+        builtin.filter { tavily || $0.name != "search_web" } + MCPManager.shared.toolSpecs(includeLocalOnly: local)
+    }
 
-    /// Claude には内蔵の Web 検索を使わせるため、Tavily 検索を外したもの
-    static var specsForClaude: [ToolSpec] { allSpecs.filter { $0.name != "search_web" } }
+    /// 動作確認用：すべてのツール
+    static var allSpecs: [ToolSpec] { specs(local: true) }
 
-    static let specs: [ToolSpec] = [
+    static let builtin: [ToolSpec] = [
         ToolSpec(name: "get_datetime", description: "現在の日付と時刻を取得する", properties: [:]),
         ToolSpec(name: "open_app", description: "Mac のアプリを起動する。name はアプリ名（例: Safari, Music, Finder, カレンダー）",
                  properties: ["name": ["type": "string"]]),
@@ -68,7 +72,7 @@ enum Tools {
     /// ツールを実行して (結果テキスト, エラーかどうか) を返す
     static func execute(name: String, arguments: Any?) async -> (String, Bool) {
         if MCPManager.shared.handles(name) {
-            return await MCPManager.shared.call(name, arguments: arguments)
+            return await MCPManager.shared.call(name, arguments: arguments, localAllowed: AppSettings.shared.backend == .local)
         }
         do {
             let args = try validate(name: name, arguments: arguments)
@@ -79,7 +83,7 @@ enum Tools {
     }
 
     private static func validate(name: String, arguments: Any?) throws -> [String: Any] {
-        guard let spec = specs.first(where: { $0.name == name }) else { throw ToolError(message: "unknown tool: \(name)") }
+        guard let spec = builtin.first(where: { $0.name == name }) else { throw ToolError(message: "unknown tool: \(name)") }
         var raw: [String: Any] = [:]
         if let s = arguments as? String {
             if !s.isEmpty {

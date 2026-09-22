@@ -4,6 +4,8 @@ import Foundation
 struct ChatMessage {
     let role: String  // "user" | "assistant"
     let content: String
+    /// ローカル専用のツール（右筆のメールなど）を使ったやりとり。クラウドの AI には渡さない
+    var localOnly = false
 }
 
 struct LLMError: LocalizedError {
@@ -89,8 +91,8 @@ enum HTTP {
     }
 }
 
-@MainActor private func openAIStyleTools() -> [[String: Any]] {
-    Tools.allSpecs.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
+@MainActor private func openAIStyleTools(local: Bool) -> [[String: Any]] {
+    Tools.specs(local: local).map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
 }
 
 // MARK: - Ollama (ローカル)
@@ -108,7 +110,7 @@ struct OllamaBackend: LLMBackend {
                     messages.append(["role": "user", "content": user])
                     for _ in 0..<maxToolRounds {
                         let body: [String: Any] = [
-                            "model": model, "messages": messages, "tools": openAIStyleTools(),
+                            "model": model, "messages": messages, "tools": openAIStyleTools(local: true),
                             "stream": true, "think": false, "keep_alive": "30m",
                         ]
                         let lines: AsyncLineSequence<URLSession.AsyncBytes>
@@ -162,7 +164,7 @@ struct AnthropicBackend: LLMBackend {
                 do {
                     var messages: [[String: Any]] = history.map { ["role": $0.role, "content": $0.content] }
                     messages.append(["role": "user", "content": user])
-                    var tools: [[String: Any]] = Tools.specsForClaude.map {
+                    var tools: [[String: Any]] = Tools.specs(local: false, tavily: false).map {
                         ["name": $0.name, "description": $0.description, "input_schema": $0.parameters, "eager_input_streaming": true]
                     }
                     // Claude 内蔵の Web 検索（Anthropic のサーバー側で検索して結果を読む）
@@ -282,7 +284,7 @@ struct OpenAICompatBackend: LLMBackend {
                     messages += history.map { ["role": $0.role, "content": $0.content] }
                     messages.append(["role": "user", "content": user])
                     for _ in 0..<maxToolRounds {
-                        let body: [String: Any] = ["model": model, "messages": messages, "tools": openAIStyleTools(), "stream": true]
+                        let body: [String: Any] = ["model": model, "messages": messages, "tools": openAIStyleTools(local: false), "stream": true]
                         let lines = try await HTTP.postLines("\(baseURL)/chat/completions", headers: ["Authorization": "Bearer \(apiKey)"], body: body)
                         var text = ""
                         var calls: [Int: (id: String, name: String, args: String)] = [:]

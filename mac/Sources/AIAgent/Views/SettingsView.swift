@@ -297,6 +297,12 @@ private struct MCPSettings: View {
                         HStack {
                             Circle().fill(color(st)).frame(width: 8, height: 8)
                             Text(name == "yuhitsu" ? "右筆 (yuhitsu)" : name)
+                            if mcp.isLocalOnly(name) {
+                                Label("ローカル AI 専用", systemImage: "lock.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .help("データを Mac の外に出さないため、AI がローカル（Ollama）のときだけ使えます")
+                            }
                             Spacer()
                             Text(st.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
