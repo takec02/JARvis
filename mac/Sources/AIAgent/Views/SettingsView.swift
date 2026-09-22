@@ -281,10 +281,10 @@ private struct MCPSettings: View {
                 if let err = mcp.configError {
                     Text(err).foregroundStyle(.red)
                 }
-                if mcp.serverNames.isEmpty {
-                    Text("まだ読み込まれていません").foregroundStyle(.secondary)
+                if visibleServers.isEmpty {
+                    Text("MCP サーバーはまだ登録されていません").foregroundStyle(.secondary)
                 }
-                ForEach(mcp.serverNames, id: \.self) { name in
+                ForEach(visibleServers, id: \.self) { name in
                     let st = mcp.status[name] ?? .connecting
                     DisclosureGroup {
                         let tools = mcp.toolNames(of: name)
@@ -330,6 +330,15 @@ private struct MCPSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 右筆は、連携版を使っている人だけに関係するので、接続できたときだけ表示する
+    private var visibleServers: [String] {
+        mcp.serverNames.filter { name in
+            guard name == "yuhitsu" else { return true }
+            if case .connected = mcp.status[name] { return true }
+            return false
+        }
     }
 
     private func color(_ s: MCPStatus) -> Color {
