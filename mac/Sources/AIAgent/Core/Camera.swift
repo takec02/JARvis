@@ -12,6 +12,8 @@ final class Camera {
     /// 直前に撮った写真（画面の確認用）
     private(set) var lastPhoto: NSImage?
     private(set) var lastPhotoAt: Date?
+    /// 直前に読み取った内容（「これ、予定に入れて」のように後から指されたときに使う）
+    private(set) var lastReading: String?
 
     /// 撮った写真を AI に渡すための JPEG。道具の結果と一緒にバックエンドが取り出して送る
     private var pendingJPEG: Data?
@@ -22,9 +24,13 @@ final class Camera {
         let codes: [(kind: String, value: String)]
     }
 
+    /// 撮るときに鳴らすシャッター音（Mac に入っているもの）
+    private static let shutter = NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif", byReference: true)
+
     /// 1枚撮って、文字とコードを読み取る
     func look() async throws -> Reading {
         let image = try await Self.capture()
+        Self.shutter?.play()  // 撮ったことが分かるように鳴らす
         let (text, codes) = try await Task.detached(priority: .userInitiated) { try Self.analyze(image) }.value
         guard let jpeg = Self.jpeg(image, maxSide: 1024) else { throw Tools.ToolError(message: "写真を画像にできませんでした") }
         lastPhoto = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
@@ -42,7 +48,45 @@ final class Camera {
     func clearPhoto() {
         lastPhoto = nil
         lastPhotoAt = nil
+        lastReading = nil
         pendingJPEG = nil
+        hasAttachment = false
+    }
+
+    /// ユーザーから渡された画像が、まだ AI に見せられていないか
+    private(set) var hasAttachment = false
+
+    /// ファイルやドラッグで渡された画像を取り込む（カメラと同じ扱いにする）
+    @discardableResult
+    func attach(url: URL) throws -> Reading {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw Tools.ToolError(message: "画像として読めませんでした: \(url.lastPathComponent)")
+        }
+        return try attach(image: image)
+    }
+
+    @discardableResult
+    func attach(image: CGImage) throws -> Reading {
+        let (text, codes) = try Self.analyze(image)
+        guard let jpeg = Self.jpeg(image, maxSide: 1024) else { throw Tools.ToolError(message: "画像を変換できませんでした") }
+        lastPhoto = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        lastPhotoAt = Date()
+        pendingJPEG = jpeg
+        hasAttachment = true
+        return Reading(jpeg: jpeg, text: text, codes: codes)
+    }
+
+    func attachmentUsed() { hasAttachment = false }
+
+    /// 読み取った内容を覚えておく（10分以内なら「これ」で参照できる）
+    func note(reading: String) { lastReading = reading }
+
+    /// 直前に見たものを、話の流れに足すべきか
+    func recentReading(for text: String) -> String? {
+        guard let reading = lastReading, let at = lastPhotoAt, Date().timeIntervalSince(at) < 600 else { return nil }
+        let words = ["これ", "この", "それ", "さっきの写真", "さっき見た", "写真"]
+        return words.contains(where: text.contains) ? reading : nil
     }
 
     // MARK: 撮影

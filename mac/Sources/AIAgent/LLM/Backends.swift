@@ -99,7 +99,7 @@ enum HTTP {
 @MainActor
 enum CameraAttachment {
     static func take(after toolName: String) -> Data? {
-        toolName == "look_camera" ? Camera.shared.takePendingJPEG() : nil
+        ["look_camera", "look_image"].contains(toolName) ? Camera.shared.takePendingJPEG() : nil
     }
 
     /// カメラで撮ることを頼んでいる発話か（「天気を見て」のような、カメラと関係ない「見て」は含めない）
@@ -144,12 +144,15 @@ struct OllamaBackend: LLMBackend {
                     messages.append(["role": "user", "content": user])
                     // 小さいモデルは「撮り直して」と言われても道具を呼ばず、前の答えを使い回すことがある。
                     // カメラを頼む言葉があれば、モデルの判断を待たずに先に撮って、その結果を渡す
-                    if CameraAttachment.isCameraRequest(user) {
-                        let (result, _) = await Tools.execute(name: "look_camera", arguments: [String: Any]())
+                    // 画像を渡されているとき、またはカメラを頼まれたときは、モデルの判断を待たずに先に見る
+                    let firstLook = Camera.shared.hasAttachment ? "look_image"
+                        : (CameraAttachment.isCameraRequest(user) ? "look_camera" : nil)
+                    if let firstLook {
+                        let (result, _) = await Tools.execute(name: firstLook, arguments: [String: Any]())
                         messages.append(["role": "assistant", "content": "",
-                                         "tool_calls": [["function": ["name": "look_camera", "arguments": [String: Any]()]]]])
-                        var message: [String: Any] = ["role": "tool", "content": result, "tool_name": "look_camera"]
-                        if let jpeg = CameraAttachment.take(after: "look_camera") {
+                                         "tool_calls": [["function": ["name": firstLook, "arguments": [String: Any]()]]]])
+                        var message: [String: Any] = ["role": "tool", "content": result, "tool_name": firstLook]
+                        if let jpeg = CameraAttachment.take(after: firstLook) {
                             if await canSeeImages() {
                                 message["images"] = [jpeg.base64EncodedString()]
                             } else {

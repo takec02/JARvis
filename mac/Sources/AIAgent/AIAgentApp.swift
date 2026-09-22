@@ -88,6 +88,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 動作確認用: `AIAgent --mcp-selftest [ツール名 JSON引数]` で MCP の接続とツール呼び出しを表示して終了する
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
+        // 動作確認用: `AIAgent --image-selftest <画像> "質問"` で、渡した画像について答えられるかを試す
+        if let i = args.firstIndex(of: "--image-selftest"), args.count > i + 2 {
+            Task { @MainActor in
+                do {
+                    let reading = try Camera.shared.attach(url: URL(fileURLWithPath: args[i + 1]))
+                    print("読み取った文字: \(reading.text.prefix(3).joined(separator: " / "))")
+                    Camera.shared.note(reading: reading.text.joined(separator: "\n"))
+                    let backend = try makeBackend(.local, settings: AppSettings.shared)
+                    var full = ""
+                    for try await chunk in backend.respond(history: [], user: args[i + 2] + "\n（画像が添付されています。look_image ツールで見てから答えてください）", system: "あなたは日本語で短く答える秘書です。") {
+                        full += chunk
+                    }
+                    print("答え: \(full)")
+                } catch {
+                    print("error: \(error)")
+                }
+                exit(0)
+            }
+            return
+        }
         // 動作確認用: `AIAgent --memory-selftest` で、記憶の保存・検索・削除を試して終了する
         if args.contains("--memory-selftest") {
             Task { @MainActor in

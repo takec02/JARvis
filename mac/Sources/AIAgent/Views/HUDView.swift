@@ -272,6 +272,14 @@ struct HUDView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url else { return }
+                Task { @MainActor in agent.attachImage(url) }
+            }
+            return true
+        }
     }
 
     private func header(tint: Color) -> some View {
@@ -330,6 +338,17 @@ struct HUDView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.3))
         }
+    }
+
+    /// 画像ファイルを選んで渡す
+    private func pickImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.prompt = "渡す"
+        panel.message = "見てもらう画像を選んでください"
+        NSApp.activate()
+        if panel.runModal() == .OK, let url = panel.url { agent.attachImage(url) }
     }
 
     /// カメラで撮った写真（AI が何を見たのかを確かめられるように出しておく）
@@ -431,6 +450,7 @@ struct HUDView: View {
                       help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
                 agent.toggleMeeting()
             }
+            HUDButton(symbol: "photo", tint: tint, help: "画像を渡して見てもらう") { pickImage() }
             HUDButton(symbol: "trash", tint: tint, help: "会話を消去して、呼びかけ待ちに戻る") { agent.clearConversation() }
             HUDButton(symbol: "gearshape", tint: tint, help: "設定") {
                 NSApp.activate()

@@ -74,6 +74,8 @@ enum Tools {
         ToolSpec(name: "look_camera",
                  description: "Mac のカメラで今見えているものを1枚撮って見る。「これ何？」「これ読んで」「この名刺を登録して」「QR コード読んで」など、ユーザーがカメラに何かを見せているときに使う。写っている文字と QR コード・バーコードの中身を返す",
                  properties: [:]),
+        ToolSpec(name: "look_image", description: "ユーザーが渡した画像（ドラッグや「画像を渡す」で添付されたもの）を見る。添付があると伝えられたら、これを呼んでから答える",
+                 properties: [:]),
         ToolSpec(name: "open_url", description: "Web ページ（http/https の URL）をブラウザで開く。QR コードの URL を開くときなど。開く前にユーザーに確認する",
                  properties: ["url": ["type": "string"]]),
         ToolSpec(name: "run_shortcut", description: "macOS のショートカット.app に登録されたショートカットを名前で実行する",
@@ -199,6 +201,14 @@ enum Tools {
             if !r.codes.isEmpty {
                 out.append("読み取ったコード:\n" + r.codes.map { "\($0.kind): \($0.value)" }.joined(separator: "\n"))
             }
+            let text = out.joined(separator: "\n")
+            Camera.shared.note(reading: text)
+            return text
+        case "look_image":
+            guard Camera.shared.lastPhoto != nil else { return "渡された画像がありません" }
+            Camera.shared.attachmentUsed()
+            var out = ["渡された画像を見ます。"]
+            if let reading = Camera.shared.lastReading { out.append(reading) }
             return out.joined(separator: "\n")
         case "open_url":
             let raw = (args["url"] as! String).trimmingCharacters(in: .whitespaces)

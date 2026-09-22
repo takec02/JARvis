@@ -170,6 +170,16 @@ final class AgentController {
         }
     }
 
+    /// 画像ファイルを渡す（ボタンやドラッグから）
+    func attachImage(_ url: URL) {
+        do {
+            try Camera.shared.attach(url: url)
+            entries.append(ConversationEntry(role: "system", text: "画像を渡しました: \(url.lastPathComponent)"))
+        } catch {
+            entries.append(ConversationEntry(role: "system", text: error.localizedDescription))
+        }
+    }
+
     /// 時間のかかる処理の途中経過を画面に出す（「写真を見ています…」など）
     func showNote(_ text: String) { liveText = text }
 
@@ -290,7 +300,13 @@ final class AgentController {
             return
         }
         let system = systemPrompt()
-        let userText = text
+        // 「これ、予定に入れて」のように直前の写真を指しているときは、読み取った内容を添える
+        var userText = text
+        if Camera.shared.hasAttachment {
+            userText += "\n（画像が添付されています。look_image ツールで見てから答えてください）"
+        } else if let reading = Camera.shared.recentReading(for: text) {
+            userText += "\n（直前にカメラで見たもの:\n\(reading)）"
+        }
         let isLocal = settings.backend == .local
         // ローカル専用のデータ（メールなど）を含むやりとりは、クラウドの AI に渡さない
         let sendHistory = isLocal ? history : history.filter { !$0.localOnly }
@@ -603,7 +619,10 @@ final class AgentController {
         - 今は \(dateFmt.string(from: Date())) です。\(Self.relativeDates())
         - ユーザーのことは「\(title)」と呼ぶ（敬称を足さず、この呼び方そのままで）。
         - あなたは\(settings.agentGender == .male ? "男性" : "女性")の側近として、それらしい自然な話し方をする。
-        - 返答は音声で読み上げられる。1〜3文の短い話し言葉で、要点から答える。
+        - 返答は音声で読み上げられる。1〜3文の短い話し言葉で、要点から答える。長い説明や列挙はしない。
+        - 前置き・お礼・復唱をしない。「〜という指示ありがとうございます」「〜についてですね」のような文は書かない。いきなり用件から話す。
+        - 足りない情報があるときは、まとめて聞かず、いちばん必要な1つだけを短く聞く。
+        - 予定の登録などは、日時と件名が分かればすぐ実行する。場所や参加者は、聞かれていなければ空のままでよい。
         - Markdown、箇条書き、絵文字、URL、コードは使わない。数字や記号も読み上げやすく書く。
         - 落ち着いた丁寧な口調で、ときどき控えめなユーモアを交えてよい。
         - Mac の操作（音量・アプリ起動・音楽など）や情報取得（時刻・天気・バッテリーなど）を頼まれたら、返答する前に必ず該当するツールを呼び出す。ツールを呼ばずに「設定しました」「開きました」などと言ってはいけない。
