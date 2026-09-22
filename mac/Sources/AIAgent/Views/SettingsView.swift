@@ -78,9 +78,8 @@ private struct GeneralSettings: View {
 
 private struct AISettings: View {
     @Environment(AgentController.self) private var agent
-    @State private var keys: [BackendKind: String] = [:]
-    @State private var tavilyKey = ""
-    @State private var saved = false
+    @State private var tavilyUsage: WebTools.Usage?
+    @State private var usageError: String?
 
     var body: some View {
         @Bindable var s = agent.settings
@@ -98,55 +97,122 @@ private struct AISettings: View {
             }
             Section("Claude — 従量課金") {
                 TextField("モデル", text: $s.claudeModel)
-                keyField(.claude, link: "https://console.anthropic.com/settings/keys")
+                APIKeyField(account: "anthropic", placeholder: "sk-ant-… を貼り付け", link: "https://console.anthropic.com/settings/keys")
             }
             Section("GPT — 従量課金") {
                 TextField("モデル", text: $s.gptModel)
-                keyField(.gpt, link: "https://platform.openai.com/api-keys")
+                APIKeyField(account: "openai", placeholder: "sk-… を貼り付け", link: "https://platform.openai.com/api-keys")
             }
             Section("Gemini — 無料枠あり") {
                 TextField("モデル", text: $s.geminiModel)
-                keyField(.gemini, link: "https://aistudio.google.com/apikey")
+                APIKeyField(account: "gemini", placeholder: "AIza… を貼り付け", link: "https://aistudio.google.com/apikey")
             }
             Section {
-                HStack {
-                    SecureField("API キー", text: $tavilyKey)
-                        .onChange(of: tavilyKey) { saved = false }
-                    Link("取得", destination: URL(string: "https://app.tavily.com")!)
+                APIKeyField(account: "tavily", placeholder: "tvly-… を貼り付け", link: "https://app.tavily.com") {
+                    Task { await refreshUsage() }
+                }
+                LabeledContent("今月の使用量") {
+                    HStack(spacing: 8) {
+                        if let u = tavilyUsage {
+                            ProgressView(value: Double(min(u.used, u.limit)), total: Double(max(u.limit, 1)))
+                                .frame(width: 120)
+                                .tint(u.used >= u.limit ? .red : u.used * 10 >= u.limit * 8 ? .orange : .accentColor)
+                            Text("\(u.used) / \(u.limit) 回").monospacedDigit()
+                        } else {
+                            Text(usageError ?? "—").foregroundStyle(.secondary)
+                        }
+                        Button { Task { await refreshUsage() } } label: { Image(systemName: "arrow.clockwise") }
+                            .buttonStyle(.borderless)
+                            .help("使用量を更新")
+                    }
                 }
             } header: {
                 Text("Web 検索（Tavily）— 月1,000回まで無料")
             } footer: {
-                Text("ローカル・GPT・Gemini のときに使います。Claude のときは Claude 内蔵の Web 検索（1,000回あたり約10ドル）を使います。")
+                Text("ローカル・GPT・Gemini のときに使います。Claude のときは Claude 内蔵の Web 検索（1,000回あたり約10ドル）を使います。無料枠を使い切ると、翌月の枠が回復するまで検索できません（その間はブラウザで開く検索を提案します）。")
             }
             Section {
-                HStack {
-                    Text("API キーは Mac のキーチェーンに保存されます。").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if saved { Text("保存しました").font(.caption).foregroundStyle(.green) }
-                    Button("キーを保存") {
-                        for (kind, value) in keys {
-                            if let account = kind.keychainAccount { Keychain.set(value.trimmingCharacters(in: .whitespacesAndNewlines), for: account) }
-                        }
-                        Keychain.set(tavilyKey.trimmingCharacters(in: .whitespacesAndNewlines), for: "tavily")
-                        saved = true
-                    }
-                }
+                Text("API キーは入力するとすぐに Mac のキーチェーンに保存されます。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            for kind in BackendKind.allCases {
-                if let account = kind.keychainAccount { keys[kind] = Keychain.get(account) ?? "" }
-            }
-            tavilyKey = Keychain.get("tavily") ?? ""
-        }
+        .task { await refreshUsage() }
     }
 
-    private func keyField(_ kind: BackendKind, link: String) -> some View {
-        HStack {
-            SecureField("API キー", text: Binding(get: { keys[kind] ?? "" }, set: { keys[kind] = $0; saved = false }))
-            Link("取得", destination: URL(string: link)!)
+    private func refreshUsage() async {
+        do {
+            tavilyUsage = try await WebTools.usage()
+            usageError = nil
+        } catch {
+            tavilyUsage = nil
+            usageError = (error as? Tools.ToolError)?.message ?? "取得できません"
+        }
+    }
+}
+
+/// API キーの入力欄。枠付きで、登録済みかどうかと末尾4文字を表示し、入力するとすぐ保存する
+private struct APIKeyField: View {
+    let account: String
+    let placeholder: String
+    let link: String
+    var onSaved: (() -> Void)?
+    @State private var value = ""
+    @State private var reveal = false
+    @State private var loaded = false
+
+    init(account: String, placeholder: String, link: String, onSaved: (() -> Void)? = nil) {
+        self.account = account
+        self.placeholder = placeholder
+        self.link = link
+        self.onSaved = onSaved
+    }
+
+    private var trimmed: String { value.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("API キー")
+                Spacer()
+                if trimmed.isEmpty {
+                    Label("未登録", systemImage: "circle.dashed").foregroundStyle(.secondary)
+                } else {
+                    Label("登録済み（…\(trimmed.suffix(4))）", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                Link("キーを取得", destination: URL(string: link)!)
+            }
+            .font(.callout)
+            HStack(spacing: 6) {
+                Group {
+                    if reveal {
+                        TextField("", text: $value, prompt: Text(placeholder))
+                    } else {
+                        SecureField("", text: $value, prompt: Text(placeholder))
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .labelsHidden()
+                Button { reveal.toggle() } label: { Image(systemName: reveal ? "eye.slash" : "eye") }
+                    .buttonStyle(.borderless)
+                    .help(reveal ? "隠す" : "表示する")
+                if !trimmed.isEmpty {
+                    Button { value = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.borderless)
+                        .help("キーを削除")
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .onAppear {
+            value = Keychain.get(account) ?? ""
+            loaded = true
+        }
+        .onChange(of: value) {
+            guard loaded else { return }
+            Keychain.set(trimmed, for: account)
+            onSaved?()
         }
     }
 }

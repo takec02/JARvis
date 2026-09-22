@@ -141,7 +141,7 @@ enum WebTools {
         ])
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-            throw Tools.ToolError(message: "検索に失敗しました（HTTP \(http.statusCode)）")
+            throw Tools.ToolError(message: tavilyError(http))
         }
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         var out: [String] = []
@@ -153,6 +153,43 @@ enum WebTools {
             out.append("[\(i + 1)] \(title)\n\(url)\n\(content)")
         }
         return out.isEmpty ? "検索結果がありませんでした" : out.joined(separator: "\n\n")
+    }
+
+    /// Tavily のエラーを、ユーザーに伝えられる形にする。AI には代わりの手段も示す
+    private static func tavilyError(_ http: HTTPURLResponse) -> String {
+        let fallback = "代わりに open_web_search でブラウザに検索結果を開けることを提案してください。"
+        switch http.statusCode {
+        case 401: return "Tavily の API キーが無効です（設定 → AI で確認）。" + fallback
+        case 432: return "Tavily の今月の無料枠（1,000回）を使い切りました。翌月に回復するまで検索できません。" + fallback
+        case 433: return "Tavily の従量課金の上限に達しました（Tavily のダッシュボードで上限を変更できます）。" + fallback
+        case 429:
+            let wait = http.value(forHTTPHeaderField: "Retry-After").map { "約\($0)秒後に" } ?? "少し待ってから"
+            return "短時間に検索しすぎたため一時的に制限されています。\(wait)もう一度試せます。"
+        case 500...599: return "Tavily 側で一時的な障害が起きています。" + fallback
+        default: return "検索に失敗しました（HTTP \(http.statusCode)）。" + fallback
+        }
+    }
+
+    struct Usage { let used: Int; let limit: Int }
+
+    /// 今月の使用量（プラン全体の使用回数と上限）
+    static func usage() async throws -> Usage {
+        guard let key = Keychain.get("tavily"), !key.isEmpty else { throw Tools.ToolError(message: "キー未登録") }
+        var req = URLRequest(url: URL(string: "https://api.tavily.com/usage")!, timeoutInterval: 10)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw Tools.ToolError(message: http.statusCode == 401 ? "キーが無効です" : "取得できません（HTTP \(http.statusCode)）")
+        }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let account = obj["account"] as? [String: Any] ?? [:]
+        let key_ = obj["key"] as? [String: Any] ?? [:]
+        func int(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
+        guard let used = int(account["plan_usage"]) ?? int(key_["usage"]),
+              let limit = int(account["plan_limit"]) ?? int(key_["limit"]) else {
+            throw Tools.ToolError(message: "取得できません")
+        }
+        return Usage(used: used, limit: limit)
     }
 
     static func read(urlString: String) async throws -> String {
