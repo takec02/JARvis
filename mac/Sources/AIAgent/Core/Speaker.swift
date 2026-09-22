@@ -88,8 +88,17 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
 
     /// Markdown 記号などを読み上げ向けに取り除く
     static func clean(_ text: String) -> String {
-        var t = text.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-        t = t.replacingOccurrences(of: #"[*_#`>|~]"#, with: "", options: .regularExpression)
+        var t = Markdown.strip(text)
+        // 行頭の箇条書き記号を先に落とす
+        t = t.replacingOccurrences(of: #"(?m)^[ \t]*[-–—•・][ \t]*"#, with: "", options: .regularExpression)
+        // 「10:00」を「10時」、「14:30」を「14時30分」と読ませる（そのままだと「コロン」と読み上げる）
+        t = t.replacingOccurrences(of: #"(?<!\d)([01]?\d|2[0-3]):00(?!\d)"#, with: "$1時", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)"#, with: "$1時$2分", options: .regularExpression)
+        // 「10時 - 12時」を「10時から12時」と読ませる
+        t = t.replacingOccurrences(of: #"(時|分)[ \t]*[-–—〜~][ \t]*(\d)"#, with: "$1から$2", options: .regularExpression)
+        // 残ったコロンは、間として読ませる
+        t = t.replacingOccurrences(of: #"[ \t]*[:：][ \t]*"#, with: "、", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
@@ -112,5 +121,16 @@ struct SentenceSplitter {
     mutating func flush() -> String {
         defer { buffer = "" }
         return buffer
+    }
+}
+
+/// AI が Markdown を混ぜて返してきたときに、読み上げと画面から記号を外す
+enum Markdown {
+    static func strip(_ text: String) -> String {
+        var t = text.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)  // リンク
+        t = t.replacingOccurrences(of: #"```[a-zA-Z]*"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"(?m)^#{1,6}\s*"#, with: "", options: .regularExpression)  // 見出し
+        t = t.replacingOccurrences(of: #"[*_`~|>]"#, with: "", options: .regularExpression)  // 強調・引用・表の記号
+        return t
     }
 }

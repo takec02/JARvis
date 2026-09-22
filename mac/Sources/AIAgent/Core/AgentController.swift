@@ -328,7 +328,8 @@ final class AgentController {
 
     // 画面用の履歴は上限で古いものから消えるため、位置ではなく ID で探す
     private func updateEntry(_ id: UUID, text: String) {
-        if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].text = text }
+        // AI が Markdown を混ぜてくることがあるので、画面でも記号は出さない
+        if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].text = Markdown.strip(text) }
     }
 
     private func removeEntryIfEmpty(_ id: UUID) {
