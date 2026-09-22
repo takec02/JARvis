@@ -5,7 +5,10 @@
 set -e
 cd "$(dirname "$0")"
 APP_NAME="AIエージェント"
-APP="build/$APP_NAME.app"
+# 書類フォルダは iCloud の同期で拡張属性が付き直され、署名に失敗することがあるため、同期されない場所で組み立てる
+OUT="$HOME/Library/Caches/AIAgent/build"
+APP="$OUT/$APP_NAME.app"
+mkdir -p "$OUT"
 
 swift build -c release
 [ -f Resources/AppIcon.icns ] || swift scripts/make_icon.swift Resources

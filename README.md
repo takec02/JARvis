@@ -32,7 +32,7 @@ Mac に常駐する、ローカル音声対話 AI アシスタント。自分で
 
 ```bash
 cd mac
-./build.sh --install   # ビルドして /Applications にインストール・起動
+./build.sh --install   # ビルドして /Applications にインストール・起動（ビルドは ~/Library/Caches/AIAgent/build に作られます）
 ```
 
 **必要に応じて**（すべて「設定」画面から登録。API キーは Mac のキーチェーンに保存されます）

@@ -9,7 +9,7 @@ struct SettingsView: View {
             VoiceSettings().tabItem { Label("声", systemImage: "speaker.wave.2") }
             IntegrationSettings().tabItem { Label("連携", systemImage: "point.3.connected.trianglepath.dotted") }
         }
-        .frame(width: 520)
+        .frame(width: 520, height: 580)
         .padding(.vertical, 8)
         // 設定画面のすべての入力欄に枠を付ける（グループ表示のフォームでは、既定だと入力欄が見えないため）
         .textFieldStyle(.roundedBorder)

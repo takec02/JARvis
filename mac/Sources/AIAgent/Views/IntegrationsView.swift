@@ -335,7 +335,8 @@ private struct ServiceSetupSheet: View {
                     Text(isEditing ? "設定を変更" : "つなぐ").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -386,9 +387,10 @@ private struct ServiceSetupSheet: View {
                 .padding(20)
             }
             Divider()
-            footer.padding(16)
+            footer.padding(12)
         }
-        .frame(width: 500, height: 560)
+        // 設定画面（高さ 580）の中に収まる大きさにする。はみ出す分は中ほどがスクロールする
+        .frame(width: 490, height: 480)
         .onAppear(perform: load)
     }
 
