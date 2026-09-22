@@ -8,5 +8,5 @@ uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 [ -f config.toml ] || cp config.example.toml config.toml
 [ -f .env ] || cp .env.example .env
-ollama list | grep -q "qwen3:8b" || ollama pull qwen3:8b
+ollama list | grep -q "qwen3-vl:8b-instruct" || ollama pull qwen3-vl:8b-instruct
 echo "✅ セットアップ完了。 ./scripts/run.sh で起動します"

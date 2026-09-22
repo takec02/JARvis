@@ -19,8 +19,11 @@ cp .build/release/AIAgent "$APP/Contents/MacOS/"
 cp Resources/Info.plist "$APP/Contents/"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
-# Apple Development 証明書があれば使う（再ビルドしてもマイク許可やキーチェーン許可が保たれる）。なければ ad-hoc 署名
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 "Apple Development" | sed -E 's/.*"(.*)"/\1/' || true)
+# 自分の Apple Development 証明書で署名する（再ビルドしてもマイク許可やキーチェーン許可が保たれる）。なければ ad-hoc 署名
+# この Mac には他の人の証明書も入っているので、先頭のものではなく持ち主の名前で選ぶ（SIGN_IDENTITY で上書きできる）
+OWNER="${SIGN_OWNER:-Takehiro Kuwabara}"
+IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep "Apple Development: $OWNER" | head -1 | sed -E 's/.*"(.*)"/\1/' || true)}"
+[ -z "$IDENTITY" ] && echo "⚠️ 「Apple Development: $OWNER」の証明書が見つからないため、ad-hoc 署名にします"
 # 書類フォルダでは拡張属性が付き直され、署名に失敗することがあるので、属性を消して数回やり直す
 for i in 1 2 3; do
   xattr -cr "$APP"

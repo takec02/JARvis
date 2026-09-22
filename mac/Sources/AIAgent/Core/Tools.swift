@@ -62,8 +62,20 @@ enum Tools {
         ToolSpec(name: "open_weathernews", description: "ウェザーニュースの天気ページをブラウザで開く（ユーザーがウェザーニュースで見たいと言ったとき）。place は地名",
                  properties: ["place": ["type": "string"]]),
         ToolSpec(name: "calculate",
-                 description: "計算をする。割引・税込み・合計・平均・割り算・単位換算など、数値の計算は暗算せず必ずこれを使う。expression は Python の数式（例: 12800*0.7*1.1、round(1234/7, 2)、sqrt(2)、sum([120, 340, 560])）",
+                 description: "計算をする。割引・税込み・合計・平均・割り算・単位換算など、数値の計算は暗算せず必ずこれを使う。expression は数式（Python と同じ書き方。例: 12800*0.7*1.1、round(1234/7, 2)、sqrt(2)、sum([120, 340, 560])）",
                  properties: ["expression": ["type": "string"]]),
+        ToolSpec(name: "remember",
+                 description: "長く覚えておくことを記録する。ユーザーが「覚えておいて」と言ったとき、および会話で分かった人・好み・決めごと（例: 山田さんは取引先、返信は丁寧めに）を次回以降も使いたいときに呼ぶ。text は短い一文",
+                 properties: ["text": ["type": "string"]]),
+        ToolSpec(name: "recall", description: "覚えていることを言葉で探す。query に探したい言葉（空文字ならすべて）",
+                 properties: ["query": ["type": "string"]]),
+        ToolSpec(name: "forget", description: "覚えていることを消す。query に含まれる言葉で探して消す。消す前にユーザーへ確認する",
+                 properties: ["query": ["type": "string"]]),
+        ToolSpec(name: "look_camera",
+                 description: "Mac のカメラで今見えているものを1枚撮って見る。「これ何？」「これ読んで」「この名刺を登録して」「QR コード読んで」など、ユーザーがカメラに何かを見せているときに使う。写っている文字と QR コード・バーコードの中身を返す",
+                 properties: [:]),
+        ToolSpec(name: "open_url", description: "Web ページ（http/https の URL）をブラウザで開く。QR コードの URL を開くときなど。開く前にユーザーに確認する",
+                 properties: ["url": ["type": "string"]]),
         ToolSpec(name: "run_shortcut", description: "macOS のショートカット.app に登録されたショートカットを名前で実行する",
                  properties: ["name": ["type": "string"]]),
     ]
@@ -79,6 +91,7 @@ enum Tools {
             return await MCPManager.shared.call(name, arguments: arguments, localAllowed: AppSettings.shared.backend == .local)
         }
         if CommandLine.arguments.contains("--llm-selftest") { print("  [tool] \(name) \(arguments ?? "")") }
+        Log.write("tool call: \(name)")
         do {
             let args = try validate(name: name, arguments: arguments)
             return (try await run(name: name, args: args), false)
@@ -162,6 +175,42 @@ enum Tools {
             return "ブラウザでウェザーニュースの\(place)の天気を開きました"
         case "calculate":
             return try await Calculator.evaluate(args["expression"] as! String)
+        case "remember":
+            let text = args["text"] as! String
+            let localOnly = AppSettings.shared.backend == .local && MCPManager.shared.hasLocalOnlyConnected
+            return MemoryStore.shared.remember(text, localOnly: localOnly)
+                ? "覚えました: \(text)" : "すでに覚えているか、内容が空です"
+        case "recall":
+            let hits = MemoryStore.shared.search(args["query"] as! String, localAllowed: AppSettings.shared.backend == .local)
+            return hits.isEmpty ? "覚えていることの中に見つかりませんでした"
+                : "覚えていること:\n" + hits.map { "・\($0.text)" }.joined(separator: "\n")
+        case "forget":
+            let query = args["query"] as! String
+            guard await AgentController.shared.confirm("「\(query)」に当てはまる記憶を消します。よろしいですか？") else {
+                return "ユーザーが取りやめました"
+            }
+            let removed = MemoryStore.shared.forget(matching: query)
+            return removed.isEmpty ? "当てはまる記憶はありませんでした"
+                : "消しました:\n" + removed.map { "・\($0.text)" }.joined(separator: "\n")
+        case "look_camera":
+            let r = try await Camera.shared.look()
+            var out = ["カメラで1枚撮りました（写真は画面に表示中）。"]
+            out.append(r.text.isEmpty ? "写っている文字: なし" : "写っている文字:\n" + r.text.joined(separator: "\n"))
+            if !r.codes.isEmpty {
+                out.append("読み取ったコード:\n" + r.codes.map { "\($0.kind): \($0.value)" }.joined(separator: "\n"))
+            }
+            return out.joined(separator: "\n")
+        case "open_url":
+            let raw = (args["url"] as! String).trimmingCharacters(in: .whitespaces)
+            guard let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+                throw ToolError(message: "http または https の URL だけ開けます")
+            }
+            // QR コードなど外から来た URL は、偽のサイトのこともあるので、開く前に必ず確認する
+            guard await AgentController.shared.confirm("\(url.host() ?? raw) のページをブラウザで開きます。よろしいですか？\n\(raw)") else {
+                return "ユーザーが開くのをやめました"
+            }
+            NSWorkspace.shared.open(url)
+            return "ブラウザで開きました"
         case "run_shortcut":
             let n = args["name"] as! String
             let out = try await shell("/usr/bin/shortcuts", ["run", n], timeout: 60)
@@ -205,84 +254,67 @@ enum Tools {
     }
 }
 
-/// 数式を Python で計算する。任意のコードは実行せず、構文木を調べて許可した計算だけを行う
-/// （Web ページやメール経由で悪意ある式を渡されても、ファイル操作や通信はできない）
-enum Calculator {
-    private static let script = #"""
-import ast, math, sys
+// MARK: 動作確認用（組み込みの機能が動くかを1つずつ試す）
 
-src = sys.stdin.read()
-FUNCS = {
-    "abs": abs, "round": round, "min": min, "max": max, "sum": sum, "int": int, "float": float,
-    "sqrt": math.sqrt, "floor": math.floor, "ceil": math.ceil, "log": math.log, "log10": math.log10,
-    "log2": math.log2, "exp": math.exp, "sin": math.sin, "cos": math.cos, "tan": math.tan,
-    "radians": math.radians, "degrees": math.degrees, "factorial": math.factorial, "gcd": math.gcd,
-}
-CONSTS = {"pi": math.pi, "e": math.e}
-OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd)
-
-def check(node):
-    if isinstance(node, ast.Expression): return check(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool): return
-    if isinstance(node, ast.BinOp) and isinstance(node.op, OPS):
-        check(node.left); check(node.right)
-        if isinstance(node.op, ast.Pow):
-            r = eval(compile(ast.Expression(node.right), "", "eval"), {"__builtins__": {}}, dict(FUNCS, **CONSTS))
-            if abs(r) > 1000: raise ValueError("指数が大きすぎます")
-        return
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, OPS): return check(node.operand)
-    if isinstance(node, (ast.List, ast.Tuple)):
-        for x in node.elts: check(x)
-        return
-    if isinstance(node, ast.Name) and node.id in CONSTS: return
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FUNCS and not node.keywords:
-        if node.func.id == "factorial" and isinstance(node.args[0], ast.Constant) and node.args[0].value > 1000:
-            raise ValueError("大きすぎます")
-        for a in node.args: check(a)
-        return
-    raise ValueError("使えない書き方です: " + type(node).__name__)
-
-try:
-    tree = ast.parse(src.replace("×", "*").replace("÷", "/").replace("^", "**").replace(",", ",").strip(), mode="eval")
-    check(tree)
-    v = eval(compile(tree, "", "eval"), {"__builtins__": {}}, dict(FUNCS, **CONSTS))
-    if isinstance(v, float):
-        v = int(v) if v.is_integer() and abs(v) < 1e15 else float("%.12g" % v)
-    print(v)
-except Exception as ex:
-    print(str(ex))
-    sys.exit(1)
-"""#
-
-    static func evaluate(_ expression: String) async throws -> String {
-        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else {
-            throw Tools.ToolError(message: "Python が見つかりません（xcode-select --install で入ります）")
-        }
-        return try await withCheckedThrowingContinuation { cont in
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            p.arguments = ["-I", "-c", script]  // -I: 環境変数やユーザーのパッケージを読まない
-            let input = Pipe(), output = Pipe()
-            p.standardInput = input
-            p.standardOutput = output
-            p.standardError = output
-            p.terminationHandler = { proc in
-                let out = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if proc.terminationStatus == 0 {
-                    cont.resume(returning: "\(expression) = \(out)")
-                } else {
-                    cont.resume(throwing: Tools.ToolError(message: out.isEmpty ? "計算できませんでした" : out))
-                }
-            }
+extension Tools {
+    /// 各機能を、音量や再生状態を変えない読み取りだけの操作で1つずつ試し、結果を1行ずつ返す
+    static func selfTestReport() async -> [String] {
+        var lines: [String] = []
+        func check(_ label: String, _ body: () async throws -> String) async {
             do {
-                try p.run()
-                input.fileHandleForWriting.write(Data(expression.utf8))
-                try? input.fileHandleForWriting.close()
-                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
+                let out = try await body()
+                lines.append("✅ \(label): \(out.replacingOccurrences(of: "\n", with: " ").prefix(80))")
             } catch {
-                cont.resume(throwing: error)
+                lines.append("❌ \(label): \(String(describing: error).replacingOccurrences(of: "\n", with: " ").prefix(160))")
             }
         }
+        lines.append("ホーム: \(FileManager.default.homeDirectoryForCurrentUser.path)")
+        await check("アプリを開く（open -a Finder）") { try await shell("/usr/bin/open", ["-a", "Finder"]) }
+        await check("電池（pmset）") { try await shell("/usr/bin/pmset", ["-g", "batt"]) }
+        await check("ショートカット一覧（shortcuts list）") { try await shell("/usr/bin/shortcuts", ["list"], timeout: 20) }
+        await check("音量を読む（AppleScript）") {
+            var error: NSDictionary?
+            let r = NSAppleScript(source: "output volume of (get volume settings)")?.executeAndReturnError(&error)
+            if let error { throw ToolError(message: "\(error)") }
+            return r?.stringValue ?? "-"
+        }
+        await check("ミュージックの状態（AppleScript）") {
+            var error: NSDictionary?
+            let r = NSAppleScript(source: "tell application \"Music\" to get player state as text")?.executeAndReturnError(&error)
+            if let error { throw ToolError(message: "\(error)") }
+            return r?.stringValue ?? "-"
+        }
+        await check("計算") { try await Calculator.evaluate("(1+2)*3") }
+        await check("気象庁") { String(try await JMAWeather.forecast(place: "東京").prefix(40)) }
+        await check("Web ページを読む") { String(try await WebTools.read(urlString: "https://www.jma.go.jp/").prefix(40)) }
+        await check("ログの書き込み") {
+            Log.write("sandbox selftest")
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/AIAgent.log").path
+        }
+        await check("連携設定（mcp.json）") {
+            let d = try Data(contentsOf: MCPManager.configURL)
+            return "\(MCPManager.configURL.path) \(d.count)バイト"
+        }
+        await check("議事録フォルダ") {
+            try FileManager.default.createDirectory(at: MeetingRecorder.folder, withIntermediateDirectories: true)
+            return MeetingRecorder.folder.path
+        }
+        await check("キーチェーン（書いて読む）") {
+            Keychain.set("ok", for: "selftest.sandbox")
+            let v = Keychain.get("selftest.sandbox") ?? "読めない"
+            Keychain.set("", for: "selftest.sandbox")
+            return v
+        }
+        await check("保存済みの Tavily キー（値は出さない）") {
+            guard let v = Keychain.get("tavily"), !v.isEmpty else { throw ToolError(message: "読めない") }
+            return "読めた（\(v.count)文字）"
+        }
+        await check("uvx（Google 個人用 MCP）") { try await shell("/usr/bin/env", ["PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "uvx", "--version"]) }
+        await check("右筆の MCP") {
+            let path = "/Applications/ゆうひつ.app/Contents/MacOS/yuhitsu-mcp"
+            guard FileManager.default.isExecutableFile(atPath: path) else { throw ToolError(message: "実行できない") }
+            return "実行可能"
+        }
+        return lines
     }
 }

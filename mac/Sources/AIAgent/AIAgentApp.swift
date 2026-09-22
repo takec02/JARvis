@@ -88,6 +88,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 動作確認用: `AIAgent --mcp-selftest [ツール名 JSON引数]` で MCP の接続とツール呼び出しを表示して終了する
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
+        // 動作確認用: `AIAgent --memory-selftest` で、記憶の保存・検索・削除を試して終了する
+        if args.contains("--memory-selftest") {
+            Task { @MainActor in
+                let store = MemoryStore()
+                print("追加1:", store.remember("山田さんは A 社の担当"))
+                print("追加2（同じ）:", store.remember("山田さんは A 社の担当"))
+                print("追加3（ローカル専用）:", store.remember("家族の予定は Mac の外に出さない", localOnly: true))
+                print("件数:", store.items.count)
+                print("検索(山田):", store.search("山田", localAllowed: false).map(\.text))
+                print("クラウド時に使える件数:", store.search("", localAllowed: false).count)
+                print("ローカル時に使える件数:", store.search("", localAllowed: true).count)
+                print("指示文(クラウド):", store.promptSection(localAllowed: false).replacingOccurrences(of: "\n", with: " / "))
+                print("消した:", store.forget(matching: "山田").map(\.text))
+                print("消したあとの件数:", store.items.count)
+                store.removeAll()
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --describe-selftest` で、画像対応モデルによる説明を試す（カメラは使わない）
+        if args.contains("--describe-selftest") {
+            Task { @MainActor in
+                let image = Camera.selfTestImage()!
+                let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.75])!
+                print("モデル: \(await VisionDescriber.model() ?? "なし")")
+                let started = Date()
+                print("説明: \(await VisionDescriber.describe(jpeg) ?? "（失敗）")")
+                print(String(format: "%.1f秒", Date().timeIntervalSince(started)))
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --vision-selftest` で、文字と QR コードの読み取りを試して終了する（カメラは使わない）
+        if args.contains("--vision-selftest") {
+            do {
+                let (text, codes) = try Camera.analyze(Camera.selfTestImage()!)
+                print("文字:\n" + text.joined(separator: "\n"))
+                print("コード: " + codes.map { "\($0.kind) \($0.value)" }.joined(separator: ", "))
+            } catch {
+                print("error: \(error)")
+            }
+            exit(0)
+        }
+        // 動作確認用: `AIAgent --tools-selftest` で、組み込みの機能が動くかを1つずつ試して表示し、終了する
+        if args.contains("--tools-selftest") {
+            Task { @MainActor in
+                for line in await Tools.selfTestReport() { print(line) }
+                exit(0)
+            }
+            return
+        }
         // 動作確認用: `AIAgent --meeting-selftest` で、別アプリの音声（say）が「相手」として文字起こしされるかを表示して終了する
         if args.contains("--meeting-selftest") {
             Task { @MainActor in

@@ -24,7 +24,7 @@ Mac に常駐する、ローカル音声対話 AI アシスタント。自分で
 | やること | 方法 |
 |---|---|
 | Mac の条件 | Apple Silicon（M1 以降）、**macOS 26 以降**、ビルドに Xcode（Swift 6） |
-| ローカル AI を用意 | [Ollama](https://ollama.com/download) をインストールして起動し、`ollama pull qwen3:8b`（約 5GB） |
+| ローカル AI を用意 | [Ollama](https://ollama.com/download) をインストールして起動し、`ollama pull qwen3-vl:8b-instruct`（約 6GB。文章・ツール・写真のすべてに対応） |
 | アプリをビルド | 下のコマンドで `/Applications` にインストール |
 | 初回設定 | 起動すると表示される画面で、性別・名前・呼ばれ方を決めて「起動する」 |
 | マイクの許可 | 初回に出るダイアログで許可（出ないときは「システム設定 → プライバシーとセキュリティ → マイク」） |
@@ -54,7 +54,7 @@ cd mac
 
 ### 機能
 
-- 初回起動時に、まずエージェントの性別（男性・女性で声と話し方が変わる）を選び、名前（必須）とウェイクワード（任意、空欄なら名前）を決めます。名前の初期値は男性なら「サスケ」（猿飛佐助）、女性なら「トモエ」（巴御前）で、自由に変更できます。あなたの呼ばれ方＋敬称（初期値「あるじ」、敬称なし）もここで決めます
+- 初回起動時に、まずエージェントの性別（男性・女性で声と話し方が変わる）を選び、名前（必須）とウェイクワード（任意、空欄なら名前）を決めます。名前の初期値は男性なら「サスケ」（猿飛佐助）、女性なら「トモエ」（巴御前）で、自由に変更できます。あなたの呼ばれ方＋敬称（初期値「あなた」、敬称なし）もここで決めます
 - 音声認識が名前を漢字で書き起こしても（「のぶなが」→「信長」）、読みで照合するので反応します
 - 表示方法は「ウィンドウ＋Dock」（既定）と「メニューバーのみ」から選べます（設定でいつでも変更可）
 - AI はローカル (Ollama) / Claude / GPT / Gemini を設定画面か音声で切り替え。API キーはキーチェーンに保存
@@ -137,7 +137,7 @@ cd ai-agent-mac
 ./scripts/setup.sh
 ```
 
-`setup.sh` は [uv](https://github.com/astral-sh/uv) と [Ollama](https://ollama.com) を Homebrew で入れ、Python 環境を作り、ローカル AI モデル `qwen3:8b` をダウンロードします。Ollama アプリ（またはサービス: `brew services start ollama`）が起動している必要があります。
+`setup.sh` は [uv](https://github.com/astral-sh/uv) と [Ollama](https://ollama.com) を Homebrew で入れ、Python 環境を作り、ローカル AI モデル `qwen3-vl:8b-instruct` をダウンロードします。Ollama アプリ（またはサービス: `brew services start ollama`）が起動している必要があります。
 
 ## 使い方
 
@@ -167,7 +167,7 @@ cd ai-agent-mac
 
 | 名前 | 中身 | 料金 | 必要なもの |
 |---|---|---|---|
-| `local` | Ollama（既定: qwen3:8b） | **無料** | なし |
+| `local` | Ollama（既定: qwen3-vl:8b-instruct） | **無料** | なし |
 | `gemini` | Google Gemini | **無料枠あり** | [Google AI Studio](https://aistudio.google.com/apikey) の API キー |
 | `claude` | Anthropic Claude（既定: Claude Opus 5） | 従量課金 | [Anthropic Console](https://console.anthropic.com/) の API キー |
 | `gpt` | OpenAI GPT | 従量課金 | [OpenAI Platform](https://platform.openai.com/api-keys) の API キー |
@@ -193,7 +193,7 @@ launchd から起動したプロセスにはマイクの許可ダイアログが
 設定はすべて `config.toml`（`config.example.toml` をコピーしたもの）にあります。
 
 - **声**: `[tts] voice`。「システム設定 > アクセシビリティ > 読み上げコンテンツ > システムの声」から **Kyoko（拡張）** などの高品質な声を追加すると、より自然になります
-- **呼ばれ方**: `[assistant] user_title = "殿"` のように指定します（既定は「あるじ」）
+- **呼ばれ方**: `[assistant] user_title = "殿"` のように指定します（既定は「あなた」）
 - **ローカル AI のモデル**: `[backends.local] model`。`gemma3:12b` など Ollama で入れたものを指定
 - **ツールの追加**: `voice_agent/tools.py` に関数を書き、`TOOLS` と `_FUNCS` に登録するだけで、全ての AI から使えるようになります。コードを書かなくても、ショートカット.app で作ったショートカットは「〇〇を実行して」で呼べます
 

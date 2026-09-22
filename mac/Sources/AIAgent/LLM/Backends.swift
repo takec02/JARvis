@@ -95,11 +95,42 @@ enum HTTP {
     Tools.specs(local: local, query: query).map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
 }
 
+/// カメラの道具で撮った写真を、道具の結果と一緒に AI へ渡す
+@MainActor
+enum CameraAttachment {
+    static func take(after toolName: String) -> Data? {
+        toolName == "look_camera" ? Camera.shared.takePendingJPEG() : nil
+    }
+
+    /// カメラで撮ることを頼んでいる発話か（「天気を見て」のような、カメラと関係ない「見て」は含めない）
+    static func isCameraRequest(_ text: String) -> Bool {
+        let patterns = [
+            "撮って", "撮り直", "撮影", "カメラ", "写真", "QR", "ＱＲ", "バーコード", "名刺",
+            "これ(は)?(何|なに|なん)", "(何|なに|なん)これ", "これ(って)?(何|なに|なん)", "これ(を)?(読|見)", "これ見",
+            "もう一(回|度|かい)(見|撮|読)", "もう(いっ|一)かい(見|撮|読)",
+        ]
+        return patterns.contains { text.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    static let blindNote = "（今の AI は画像を見られないため、写真そのものは渡していません。上の文字とコードだけで答え、見た目の説明が必要なら、画像を読めるモデルか Claude などに切り替えると見られると伝えてください）"
+
+    /// 画像を読めないモデル向けに、Mac の中の画像対応モデルに写真を説明してもらって文章として渡す
+    static func describedResult(_ result: String, jpeg: Data) async -> String {
+        AgentController.shared.showNote("写真を見ています…")
+        defer { AgentController.shared.showNote("") }
+        guard let description = await VisionDescriber.describe(jpeg) else { return result + "\n" + blindNote }
+        return result + "\n写っているもの（Mac の中の画像対応モデルによる説明）:\n" + description
+    }
+}
+
 // MARK: - Ollama (ローカル)
 
 struct OllamaBackend: LLMBackend {
     let model: String
     var host = "http://localhost:11434"
+
+    /// 画像を読めるモデルか（Ollama がモデルの機能として "vision" を返すか）
+    private func canSeeImages() async -> Bool { await VisionDescriber.canSeeImages(model) }
 
     func respond(history: [ChatMessage], user: String, system: String) -> AsyncThrowingStream<String, Error> {
         // 「それを要約して」のような続きの質問にも対応できるよう、直前の質問も話題の判断に含める
@@ -111,6 +142,22 @@ struct OllamaBackend: LLMBackend {
                     var messages: [[String: Any]] = [["role": "system", "content": system]]
                     messages += history.map { ["role": $0.role, "content": $0.content] }
                     messages.append(["role": "user", "content": user])
+                    // 小さいモデルは「撮り直して」と言われても道具を呼ばず、前の答えを使い回すことがある。
+                    // カメラを頼む言葉があれば、モデルの判断を待たずに先に撮って、その結果を渡す
+                    if CameraAttachment.isCameraRequest(user) {
+                        let (result, _) = await Tools.execute(name: "look_camera", arguments: [String: Any]())
+                        messages.append(["role": "assistant", "content": "",
+                                         "tool_calls": [["function": ["name": "look_camera", "arguments": [String: Any]()]]]])
+                        var message: [String: Any] = ["role": "tool", "content": result, "tool_name": "look_camera"]
+                        if let jpeg = CameraAttachment.take(after: "look_camera") {
+                            if await canSeeImages() {
+                                message["images"] = [jpeg.base64EncodedString()]
+                            } else {
+                                message["content"] = await CameraAttachment.describedResult(result, jpeg: jpeg)
+                            }
+                        }
+                        messages.append(message)
+                    }
                     for _ in 0..<maxToolRounds {
                         let body: [String: Any] = [
                             "model": model, "messages": messages, "tools": openAIStyleTools(local: true, query: topicQuery),
@@ -140,7 +187,15 @@ struct OllamaBackend: LLMBackend {
                             let fn = call["function"] as? [String: Any] ?? [:]
                             let name = fn["name"] as? String ?? ""
                             let (result, _) = await Tools.execute(name: name, arguments: fn["arguments"])
-                            messages.append(["role": "tool", "content": result, "tool_name": name])
+                            var message: [String: Any] = ["role": "tool", "content": result, "tool_name": name]
+                            if let jpeg = CameraAttachment.take(after: name) {
+                                if await canSeeImages() {
+                                    message["images"] = [jpeg.base64EncodedString()]
+                                } else {
+                                    message["content"] = await CameraAttachment.describedResult(result, jpeg: jpeg)
+                                }
+                            }
+                            messages.append(message)
                         }
                     }
                     cont.finish()
@@ -258,7 +313,14 @@ struct AnthropicBackend: LLMBackend {
                                 // eager streaming では API 側で入力が検証されないので Tools 側で型を検証する
                                 (result, isError) = await Tools.execute(name: use["name"] as? String ?? "", arguments: input)
                             }
-                            results.append(["type": "tool_result", "tool_use_id": id, "content": result, "is_error": isError])
+                            if let jpeg = CameraAttachment.take(after: use["name"] as? String ?? "") {
+                                results.append(["type": "tool_result", "tool_use_id": id, "is_error": isError, "content": [
+                                    ["type": "text", "text": result],
+                                    ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()]],
+                                ]])
+                            } else {
+                                results.append(["type": "tool_result", "tool_use_id": id, "content": result, "is_error": isError])
+                            }
                         }
                         messages.append(["role": "user", "content": results])
                     }
@@ -319,9 +381,17 @@ struct OpenAICompatBackend: LLMBackend {
                                 ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.args.isEmpty ? "{}" : $0.args]]
                             },
                         ])
+                        var photos: [Data] = []
                         for c in ordered {
                             let (result, _) = await Tools.execute(name: c.name, arguments: c.args)
                             messages.append(["role": "tool", "tool_call_id": c.id, "content": result])
+                            if let jpeg = CameraAttachment.take(after: c.name) { photos.append(jpeg) }
+                        }
+                        // 道具の結果には画像を入れられないので、撮った写真は続けて利用者の発言として渡す
+                        if !photos.isEmpty {
+                            messages.append(["role": "user", "content": [["type": "text", "text": "（カメラで撮った写真）"]] + photos.map {
+                                ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\($0.base64EncodedString())"]]
+                            }])
                         }
                     }
                     cont.finish()

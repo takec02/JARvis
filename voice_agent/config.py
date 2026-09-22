@@ -36,7 +36,7 @@ DEFAULTS: dict = {
         "rate": 210,
     },
     "backends": {
-        "local": {"type": "ollama", "model": "qwen3:8b"},
+        "local": {"type": "ollama", "model": "qwen3-vl:8b-instruct"},
         "claude": {"type": "anthropic", "model": "claude-opus-5", "effort": "low"},
         "gpt": {"type": "openai", "model": "gpt-5-mini", "api_key_env": "OPENAI_API_KEY"},
         "gemini": {

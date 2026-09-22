@@ -261,6 +261,8 @@ struct HUDView: View {
                     .padding(.horizontal, 20)
                 CoreView(state: agent.state, level: agent.level)
                     .frame(width: compact ? 170 : 250, height: compact ? 170 : 250)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .bottomTrailing) { cameraPhoto(tint: tint).padding(.trailing, 16) }
                     .padding(.vertical, compact ? 4 : 10)
                 FlowingLog(entries: agent.entries, name: s.agentName, tint: tint, maxItems: compact ? 5 : 7)
                     .frame(maxHeight: .infinity)
@@ -324,9 +326,35 @@ struct HUDView: View {
                     .foregroundStyle(tint.opacity(0.8))
             }
         } else if agent.state == .idle {
-            Text("「\(agent.settings.effectiveWakeWord)」と呼びかけてください")
+            Text("「\(agent.settings.wakeExample)」と呼びかけてください")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.3))
+        }
+    }
+
+    /// カメラで撮った写真（AI が何を見たのかを確かめられるように出しておく）
+    @ViewBuilder
+    private func cameraPhoto(tint: Color) -> some View {
+        if let photo = Camera.shared.lastPhoto {
+            VStack(alignment: .trailing, spacing: 3) {
+                Image(nsImage: photo)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: compact ? 84 : 120)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(tint.opacity(0.6), lineWidth: 0.8))
+                    .overlay(alignment: .topTrailing) {
+                        Button { Camera.shared.clearPhoto() } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.85), .black.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .help("写真を消す")
+                        .padding(3)
+                    }
+                Text("カメラで見たもの \(Camera.shared.lastPhotoAt?.formatted(date: .omitted, time: .standard) ?? "")")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(tint.opacity(0.8))
+            }
         }
     }
 
@@ -403,7 +431,7 @@ struct HUDView: View {
                       help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
                 agent.toggleMeeting()
             }
-            HUDButton(symbol: "trash", tint: tint, help: "会話を消去") { agent.clearConversation() }
+            HUDButton(symbol: "trash", tint: tint, help: "会話を消去して、呼びかけ待ちに戻る") { agent.clearConversation() }
             HUDButton(symbol: "gearshape", tint: tint, help: "設定") {
                 NSApp.activate()
                 openSettings()

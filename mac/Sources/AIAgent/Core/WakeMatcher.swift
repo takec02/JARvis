@@ -5,6 +5,27 @@ import Foundation
 /// さらに漢字は読みに直して照合する（「のぶなが」が「信長」と書き起こされても反応する）。
 struct WakeMatcher {
     let words: [String]
+    /// 呼びかけの形（設定で選ぶ）
+    var style: WakeStyle = .nameOnly
+    /// 名前のあとに付ける呼びかけの言葉（「サスケ、応えて」）
+    var callWords: [String] = []
+    /// 名前の前に付ける呼びかけの言葉（「ヘイ、サスケ」）
+    var prefixWords: [String] = []
+
+    /// 表記でも読みでも照合できるように、両方の形をそろえておく
+    static func forms(_ words: [String]) -> [String] {
+        Set(words.flatMap { [normalize($0), reading($0)] }).filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+    }
+    private static let normalizedHonorifics = forms(["さん", "くん", "君", "ちゃん", "様", "さま", "殿"])
+
+    private var usableCallWords: [String] { style == .after || style == .both ? Self.forms(callWords) : [] }
+    private var usablePrefixWords: [String] { style == .before || style == .both ? Self.forms(prefixWords) : [] }
+
+    /// ウェイクワード自体に呼びかけの言葉が入っているか（「ヘイ サスケ」と登録されている場合）
+    static func hasCallWord(_ word: String, call: [String], prefix: [String]) -> Bool {
+        let n = normalize(word)
+        return forms(call + prefix).contains { n.count > $0.count && (n.hasPrefix($0) || n.hasSuffix($0)) }
+    }
 
     /// 正規化した文字と、それぞれが元の文字列のどこから来たか
     typealias Mapped = (chars: [Character], origin: [String.Index], originEnd: [String.Index])
@@ -113,34 +134,64 @@ struct WakeMatcher {
         // まず表記どおりに探し、見つからなければ読みで探す
         let direct = Self.normalizeWithMap(text)
         for word in sorted {
-            if let cmd = Self.command(in: text, mapped: direct, word: Self.normalize(word)) { return cmd }
+            if let cmd = Self.command(in: text, mapped: direct, word: Self.normalize(word), needsCall: needsCall(word), call: usableCallWords, prefix: usablePrefixWords) { return cmd }
         }
         let byReading = Self.readingWithMap(text)
         for word in sorted {
-            if let cmd = Self.command(in: text, mapped: byReading, word: Self.reading(word)) { return cmd }
+            if let cmd = Self.command(in: text, mapped: byReading, word: Self.reading(word), needsCall: needsCall(word), call: usableCallWords, prefix: usablePrefixWords) { return cmd }
         }
         return nil
     }
 
-    private static func command(in text: String, mapped: Mapped, word: String) -> String? {
+    private func needsCall(_ word: String) -> Bool {
+        style != .nameOnly && !Self.hasCallWord(word, call: callWords, prefix: prefixWords)
+    }
+
+    private static func command(in text: String, mapped: Mapped, word: String, needsCall: Bool,
+                                call normalizedCallWords: [String], prefix normalizedPrefixes: [String]) -> String? {
         let normText = String(mapped.chars)
-        guard !word.isEmpty, let r = normText.range(of: word) else { return nil }
-        let start = normText.distance(from: normText.startIndex, to: r.lowerBound)
+        guard !word.isEmpty else { return nil }
+        // 名前が何度か出てくることもあるので、呼びかけの言葉が付いている箇所を順に探す
+        var searchFrom = normText.startIndex
+        var found: (start: Int, prefixLength: Int, callLength: Int)?
+        while found == nil, let r = normText.range(of: word, range: searchFrom..<normText.endIndex) {
+            let start = normText.distance(from: normText.startIndex, to: r.lowerBound)
+            if !needsCall {
+                found = (start, 0, 0)
+            } else if let p = normalizedPrefixes.first(where: { normText[..<r.lowerBound].hasSuffix($0) }) {
+                found = (start, p.count, 0)  // 「ヘイ、サスケ」
+            } else {
+                // 「サスケ、応えて」。敬称（サスケさん、応えて）は間にあってもよい
+                var tail = normText[r.upperBound...]
+                var consumed = 0
+                if let h = normalizedHonorifics.first(where: { tail.hasPrefix($0) }) {
+                    tail = tail.dropFirst(h.count)
+                    consumed += h.count
+                }
+                if let c = normalizedCallWords.first(where: { tail.hasPrefix($0) }) {
+                    found = (start, 0, consumed + c.count)
+                }
+            }
+            searchFrom = normText.index(after: r.lowerBound)
+        }
+        guard let (start, prefixLength, callLength) = found else { return nil }
         let end = start + word.count - 1
-        let before = String(text[..<mapped.origin[start]])
-        var rest = Substring(text[text.index(after: mapped.originEnd[end])...])
-        // 名前のすぐ後に助詞が続くなら、呼びかけではなく話題として名前を使っている
-        //（「サスケのことを教えて」「サスケって何ができるの？」）。名前を消さずに全文を渡す
-        let particles = ["の", "は", "が", "を", "に", "と", "も", "って", "で", "へ", "や", "から", "より", "みたい", "らしい"]
-        if particles.contains(where: { rest.hasPrefix($0) }) {
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let before = String(text[..<mapped.origin[start - prefixLength]])
+        var rest = Substring(text[text.index(after: mapped.originEnd[end + callLength])...])
+        if callLength == 0 {
+            // 名前のすぐ後に助詞が続くなら、呼びかけではなく話題として名前を使っている
+            //（「サスケのことを教えて」「サスケって何ができるの？」）。名前を消さずに全文を渡す
+            let particles = ["の", "は", "が", "を", "に", "と", "も", "って", "で", "へ", "や", "から", "より", "みたい", "らしい"]
+            if particles.contains(where: { rest.hasPrefix($0) }) {
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            // 「サスケさん、…」の敬称は、呼びかけの一部として一緒に取り除く
+            for honorific in ["さん", "くん", "君", "ちゃん", "様", "さま", "殿"] where rest.hasPrefix(honorific) {
+                rest = rest.dropFirst(honorific.count)
+                break
+            }
         }
-        // 「サスケさん、…」の敬称は、呼びかけの一部として一緒に取り除く
-        for honorific in ["さん", "くん", "君", "ちゃん", "様", "さま", "殿"] where rest.hasPrefix(honorific) {
-            rest = rest.dropFirst(honorific.count)
-            break
-        }
-        // ウェイクワードの直後に続く長音や句読点（正規化で消える文字）は命令に含めない
+        // 呼びかけの直後に続く長音や句読点（正規化で消える文字）は命令に含めない
         let after = String(rest.drop { normalize(String($0)).isEmpty })
         return (before + " " + after).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
     }

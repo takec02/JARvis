@@ -31,7 +31,7 @@ rate = 210
 # ---- AI バックエンド ----
 [backends.local]
 type = "ollama"
-model = "qwen3:8b"        # 例: gemma3:12b
+model = "qwen3-vl:8b-instruct"   # 例: qwen3:8b
 keep_alive = "30m"
 think = false             # true にするとツールの使い分けが正確になるが、返答が数秒遅くなる
 

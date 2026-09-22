@@ -7,7 +7,7 @@ struct OnboardingView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var name = AgentGender.male.defaultName  // 初期値。性別に連動し、自由に書き換えられる
     @State private var wakeWord = ""
-    @State private var userTitle = "あるじ"  // 初期値。自由に書き換えられる
+    @State private var userTitle = "あなた"  // 初期値。自由に書き換えられる
     @State private var honorific = ""
     @State private var gender: AgentGender = .male
     @State private var tester = Speaker()
@@ -17,9 +17,10 @@ struct OnboardingView: View {
     private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
     private var address: String {
         let t = userTitle.trimmingCharacters(in: .whitespaces)
-        return (t.isEmpty ? "あるじ" : t) + honorific
+        return (t.isEmpty ? "あなた" : t) + honorific
     }
     private var trimmedWake: String { wakeWord.trimmingCharacters(in: .whitespaces) }
+    private var wakeExample: String { "\(wakePreview)、応えて" }
     private var wakePreview: String { trimmedWake.isEmpty ? (trimmedName.isEmpty ? gender.defaultName : trimmedName) : trimmedWake }
 
     var body: some View {
@@ -72,14 +73,14 @@ struct OnboardingView: View {
                       notes: ["画面や会話の中で使われる、エージェントの名前です。自由に変更できます。"])
 
 
-                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います（例: ヘイ サスケ）", text: $wakeWord,
-                      notes: ["この言葉が聞こえたときだけ反応します。それ以外の会話には反応しません。「\(wakePreview)、今何時？」",
+                field(title: "WAKE WORD ─ 呼びかけの言葉（任意）", placeholder: "空欄なら名前を使います", text: $wakeWord,
+                      notes: ["名前のあとに「応えて」を付けて呼びかけたときだけ反応します（形と言葉は設定で変えられます）。それ以外の会話には反応しません。「\(wakeExample)、今何時？」",
                               "英字や漢字はカタカナで入れると確実です。短い言葉や日常語（例: アイ、テレビ）は誤反応しやすくなります。"])
 
                 VStack(alignment: .leading, spacing: 8) {
                     label("YOU ─ あなたの呼ばれ方")
                     HStack(spacing: 10) {
-                        TextField("", text: $userTitle, prompt: Text("例: あるじ、殿").foregroundStyle(.white.opacity(0.25)))
+                        TextField("", text: $userTitle, prompt: Text("例: あなた、あるじ、殿").foregroundStyle(.white.opacity(0.25)))
                             .textFieldStyle(.plain)
                             .font(.system(size: 14))
                             .padding(.horizontal, 12).padding(.vertical, 9)
@@ -156,7 +157,7 @@ struct OnboardingView: View {
         s.agentName = trimmedName
         s.wakeWord = trimmedWake
         let title = userTitle.trimmingCharacters(in: .whitespaces)
-        s.userTitle = title.isEmpty ? "あるじ" : title
+        s.userTitle = title.isEmpty ? "あなた" : title
         s.userHonorific = honorific
         s.agentGender = gender
         s.voiceIdentifier = ""  // 性別に合う最適な声を自動で選ぶ

@@ -7,6 +7,8 @@ struct SettingsView: View {
             GeneralSettings().tabItem { Label("一般", systemImage: "person.crop.circle") }
             AISettings().tabItem { Label("AI", systemImage: "brain") }
             VoiceSettings().tabItem { Label("声", systemImage: "speaker.wave.2") }
+            WatchSettings().tabItem { Label("お知らせ", systemImage: "bell") }
+            MemorySettings().tabItem { Label("記憶", systemImage: "brain.head.profile") }
             IntegrationSettings().tabItem { Label("連携", systemImage: "point.3.connected.trianglepath.dotted") }
         }
         .frame(width: 520, height: 580)
@@ -40,9 +42,20 @@ private struct GeneralSettings: View {
                     .onSubmit { agent.wakeWordsChanged() }
                 TextField("ウェイクワードの別表記", text: $s.wakeAliases, prompt: Text("例: サスケ, 佐助"))
                     .onSubmit { agent.wakeWordsChanged() }
-                Text("ウェイクワード（または別表記）が聞こえたときだけ反応します。聞き取られにくいときは、読みや別の書き方をカンマ区切りで追加してください。")
+                Picker("呼びかけの形", selection: $s.wakeStyle) {
+                    ForEach(WakeStyle.allCases) { Text($0.label).tag($0) }
+                }
+                if s.wakeStyle == .after || s.wakeStyle == .both {
+                    TextField("名前のあとに付ける言葉", text: $s.wakeCallWords, prompt: Text("例: 応えて, 答えて"))
+                }
+                if s.wakeStyle == .before || s.wakeStyle == .both {
+                    TextField("名前の前に付ける言葉", text: $s.wakePrefixWords, prompt: Text("例: ヘイ, おい, ねえ"))
+                }
+                Text(s.wakeStyle == .nameOnly
+                     ? "「\(s.effectiveWakeWord)」と呼ぶだけで反応します。呼びかけの言葉を付ける形にすると、周りの会話やテレビへの誤反応が減ります。"
+                     : "「\(s.wakeExample)」のように呼びかけたときだけ反応します。言葉は複数をカンマ区切りで書けます。聞き取られにくいときは、読みや別の書き方を別表記に追加してください。")
                     .font(.caption).foregroundStyle(.secondary)
-                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: あるじ、殿"))
+                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: あなた、あるじ、殿"))
                 Picker("敬称", selection: $s.userHonorific) {
                     ForEach(AppSettings.honorifics, id: \.self) { Text($0.isEmpty ? "なし" : $0).tag($0) }
                 }
@@ -63,6 +76,7 @@ private struct GeneralSettings: View {
                     Text("オフ（毎回呼びかける）").tag(0.0)
                     Text("30秒").tag(30.0)
                     Text("1分").tag(60.0)
+                    Text("3分").tag(180.0)
                     Text("5分").tag(300.0)
                     Text("10分").tag(600.0)
                 }
@@ -95,6 +109,9 @@ private struct AISettings: View {
             }
             Section("ローカル (Ollama) — 無料") {
                 TextField("モデル", text: $s.ollamaModel)
+                TextField("写真を見るモデル", text: $s.visionModel, prompt: Text("空欄なら自動（gemma3 など、画像を読めるモデルを探す）"))
+                Text("会話に使うモデルが画像を読めないとき、写真だけをこのモデルに見せて説明してもらいます。写真は Mac の外に出ません。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Link("Ollama をダウンロード", destination: URL(string: "https://ollama.com/download")!)
             }
             Section("Claude — 従量課金") {
@@ -268,6 +285,199 @@ private struct VoiceSettings: View {
         case .premium: "（プレミアム）"
         case .enhanced: "（拡張）"
         default: ""
+        }
+    }
+}
+
+// MARK: お知らせ（自分から確かめて知らせる）
+
+private struct WatchSettings: View {
+    @Environment(AgentController.self) private var agent
+    @State private var editing: WatchRule?
+
+    var body: some View {
+        @Bindable var s = agent.settings
+        Form {
+            Section("見張り") {
+                if agent.watcher.rules.isEmpty {
+                    Text("まだ何もありません。「追加」で作れます。").foregroundStyle(.secondary)
+                }
+                ForEach(agent.watcher.rules) { rule in
+                    HStack {
+                        Toggle("", isOn: Binding(
+                            get: { rule.enabled },
+                            set: { on in
+                                var r = rule
+                                r.enabled = on
+                                agent.watcher.update(r)
+                            })).labelsHidden()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(rule.name)
+                            Text("\(rule.scheduleLabel)\(rule.lastRun.map { " ・ 最後に確認 " + $0.formatted(date: .omitted, time: .shortened) } ?? "")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("編集") { editing = rule }
+                        Button(role: .destructive) { agent.watcher.remove(rule) } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                Button("追加") { editing = agent.watcher.addNew() }
+                Text("決めた時刻や間隔で、頼んだことを\(agent.settings.agentName)が自分で確かめます。知らせることが無ければ黙ります。話している最中や会議の記録中は行いません。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("静かな時間") {
+                HStack {
+                    Picker("開始", selection: $s.quietFromHour) { ForEach(0..<24) { Text("\($0)時").tag($0) } }
+                    Picker("終了", selection: $s.quietToHour) { ForEach(0..<24) { Text("\($0)時").tag($0) } }
+                }
+                Text("この時間帯は声を出さず、通知だけにします。開始と終了を同じにすると、いつでも声を出します。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .textFieldStyle(.roundedBorder)
+        .sheet(item: $editing) { rule in WatchRuleSheet(rule: rule) { agent.watcher.update($0) } }
+    }
+}
+
+private struct WatchRuleSheet: View {
+    @State var rule: WatchRule
+    let onSave: (WatchRule) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var repeats: Bool
+
+    init(rule: WatchRule, onSave: @escaping (WatchRule) -> Void) {
+        _rule = State(initialValue: rule)
+        _repeats = State(initialValue: rule.everyMinutes != nil)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("見張りの設定").font(.headline)
+            Form {
+                TextField("名前", text: $rule.name, prompt: Text("例: 朝の読み上げ"))
+                Picker("いつ", selection: $repeats) {
+                    Text("毎日 決まった時刻").tag(false)
+                    Text("一定の間隔ごと").tag(true)
+                }
+                .pickerStyle(.radioGroup)
+                if repeats {
+                    Picker("間隔", selection: Binding(get: { rule.everyMinutes ?? 30 }, set: { rule.everyMinutes = $0 })) {
+                        ForEach([5, 10, 15, 30, 60, 120, 180, 360], id: \.self) {
+                            Text($0 % 60 == 0 && $0 >= 60 ? "\($0 / 60)時間ごと" : "\($0)分ごと").tag($0)
+                        }
+                    }
+                } else {
+                    HStack {
+                        Picker("時刻", selection: $rule.hour) { ForEach(0..<24) { Text("\($0)時").tag($0) } }
+                        Picker("", selection: $rule.minute) { ForEach([0, 15, 30, 45], id: \.self) { Text("\($0)分").tag($0) } }
+                            .labelsHidden()
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("やってもらうこと")
+                    TextEditor(text: $rule.prompt)
+                        .frame(height: 90)
+                        .font(.body)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.4)))
+                    Text("例: 未読のメールを確認して、すぐ返事が要るものだけを挙げて。無ければ、何も言わず静かにしている。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Toggle("声で知らせる", isOn: $rule.speak)
+                Toggle("通知を出す", isOn: $rule.notify)
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("やめる") { dismiss() }
+                Button("保存") {
+                    if !repeats { rule.everyMinutes = nil } else if rule.everyMinutes == nil { rule.everyMinutes = 30 }
+                    onSave(rule)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 460, height: 480)
+        .textFieldStyle(.roundedBorder)
+    }
+}
+
+// MARK: 記憶とパーソナル指示
+
+private struct MemorySettings: View {
+    @Environment(AgentController.self) private var agent
+    @State private var store = MemoryStore.shared
+    @State private var newText = ""
+    @State private var confirmClear = false
+
+    var body: some View {
+        @Bindable var s = agent.settings
+        Form {
+            Section("あなたからの指示") {
+                TextEditor(text: $s.personalPrompt)
+                    .frame(height: 110)
+                    .font(.body)
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.4)))
+                Text("ここに書いたことは毎回の指示に入り、最優先で守られます。例:「私は営業職。専門用語は噛み砕いて話して」「結論から先に言って」「敬語は控えめに」")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("覚えていること（\(store.items.count)件）") {
+                HStack {
+                    TextField("覚えさせたいこと", text: $newText, prompt: Text("例: 山田さんは A 社の担当"))
+                    Button("追加") {
+                        store.remember(newText)
+                        newText = ""
+                    }
+                    .disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if store.items.isEmpty {
+                    Text("まだ何も覚えていません。会話の中で「覚えておいて」と言うか、ここで足せます。")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(store.items) { item in
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("", text: Binding(
+                                get: { item.text },
+                                set: { text in
+                                    var m = item
+                                    m.text = text
+                                    store.update(m)
+                                }))
+                            Text(item.createdAt.formatted(date: .numeric, time: .shortened))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Toggle("ローカルのみ", isOn: Binding(
+                            get: { item.localOnly },
+                            set: { on in
+                                var m = item
+                                m.localOnly = on
+                                store.update(m)
+                            }))
+                            .toggleStyle(.checkbox)
+                            .help("オンにすると、AI がローカルのときだけ使います。クラウドの AI には渡しません")
+                        Button(role: .destructive) { store.remove(item) } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                if !store.items.isEmpty {
+                    Button("すべて消す", role: .destructive) { confirmClear = true }
+                }
+                Text("覚えていることは毎回の指示に入り、判断に使われます。保存先は Mac の中（\(MemoryStore.fileURL.path)）です。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .textFieldStyle(.roundedBorder)
+        .alert("覚えていることをすべて消しますか？", isPresented: $confirmClear) {
+            Button("消す", role: .destructive) { store.removeAll() }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("\(store.items.count)件が消えます。元に戻せません。")
         }
     }
 }
