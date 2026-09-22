@@ -18,8 +18,13 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
 # Apple Development 証明書があれば使う（再ビルドしてもマイク許可やキーチェーン許可が保たれる）。なければ ad-hoc 署名
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 "Apple Development" | sed -E 's/.*"(.*)"/\1/' || true)
-xattr -cr "$APP"
-codesign --force --sign "${IDENTITY:--}" "$APP"
+# 書類フォルダでは拡張属性が付き直され、署名に失敗することがあるので、属性を消して数回やり直す
+for i in 1 2 3; do
+  xattr -cr "$APP"
+  codesign --force --sign "${IDENTITY:--}" "$APP" 2>/dev/null && break
+  [ "$i" = 3 ] && { echo "❌ 署名に失敗しました"; exit 1; }
+  sleep 1
+done
 echo "✅ $APP (署名: ${IDENTITY:-ad-hoc})"
 
 if [ "$1" = "--install" ]; then

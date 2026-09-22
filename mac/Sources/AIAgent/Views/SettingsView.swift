@@ -11,6 +11,8 @@ struct SettingsView: View {
         }
         .frame(width: 520)
         .padding(.vertical, 8)
+        // 設定画面のすべての入力欄に枠を付ける（グループ表示のフォームでは、既定だと入力欄が見えないため）
+        .textFieldStyle(.roundedBorder)
     }
 }
 
@@ -395,8 +397,8 @@ private struct GoogleSetupSection: View {
     var body: some View {
         Section {
             DisclosureGroup("会社の Google Workspace（Google 公式）") {
-                TextField("OAuth クライアント ID", text: $workId)
-                SecureField("クライアント シークレット", text: $workSecret)
+                TextField("OAuth クライアント ID", text: $workId, prompt: Text("…apps.googleusercontent.com"))
+                SecureField("クライアント シークレット", text: $workSecret, prompt: Text("GOCSPX-…"))
                 HStack {
                     ForEach(MCPManager.googleServices) { svc in
                         Toggle(svc.label, isOn: Binding(
@@ -420,9 +422,9 @@ private struct GoogleSetupSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             DisclosureGroup("個人の Gmail など（有志の MCP サーバー）") {
-                TextField("OAuth クライアント ID", text: $personalId)
-                SecureField("クライアント シークレット", text: $personalSecret)
-                TextField("Gmail アドレス", text: $personalEmail)
+                TextField("OAuth クライアント ID", text: $personalId, prompt: Text("…apps.googleusercontent.com"))
+                SecureField("クライアント シークレット", text: $personalSecret, prompt: Text("GOCSPX-…"))
+                TextField("Gmail アドレス", text: $personalEmail, prompt: Text("you@gmail.com"))
                 Toggle("ローカル AI 専用にする", isOn: $personalLocal)
                 Button("追加する") {
                     Task {
@@ -442,6 +444,7 @@ private struct GoogleSetupSection: View {
         } footer: {
             Link("準備の手順（Google Cloud の設定）", destination: URL(string: "https://github.com/takec02/ai-agent-mac/blob/main/docs/google-setup.md")!)
         }
+        .textFieldStyle(.roundedBorder)
     }
 
     private func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -505,6 +508,7 @@ private struct BusinessServicesSection: View {
         } footer: {
             Text("API キーやパスワードは Mac のキーチェーンに保存され、設定ファイルには書かれません。初回の起動時に、各社の MCP サーバーを自動でダウンロードします（Node.js が必要）。")
         }
+        .textFieldStyle(.roundedBorder)
     }
 
     private func note(_ text: String) -> some View {
@@ -609,6 +613,7 @@ private struct OtherServicesSection: View {
         } footer: {
             Text("書き込み（メッセージ送信・ページ作成・課題登録など）は、実行前に声か画面で確認します。")
         }
+        .textFieldStyle(.roundedBorder)
     }
 
     private var ready: Bool {
