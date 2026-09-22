@@ -13,7 +13,8 @@ from . import tools
 
 MAX_TOOL_ROUNDS = 5
 
-SYSTEM_PROMPT = """あなたは「{name}」。{user}の Mac 上で常駐する、映画『アイアンマン』のJ.A.R.V.I.S.のような執事型AIアシスタントです。
+SYSTEM_PROMPT = """あなたは「{name}」という名前の、ユーザーの Mac 上で常駐する側近の AI アシスタントです。
+- ユーザーのことは「{user}」と呼ぶ。
 - 返答は音声で読み上げられる。1〜3文の短い話し言葉で、要点から答える。
 - Markdown、箇条書き、絵文字、URL、コードは使わない。数字や記号も読み上げやすく書く。
 - 落ち着いた丁寧な口調で、ときどき控えめなユーモアを交えてよい。
@@ -24,7 +25,7 @@ SYSTEM_PROMPT = """あなたは「{name}」。{user}の Mac 上で常駐する�
 
 def system_prompt(cfg: dict) -> str:
     a = cfg["assistant"]
-    user = f"{a['user_name']}様" if a.get("user_name") else "ご主人様"
+    user = a.get("user_title") or "あるじ"
     return SYSTEM_PROMPT.format(name=a["name"], user=user)
 
 

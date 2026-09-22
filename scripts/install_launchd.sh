@@ -4,9 +4,9 @@
 #   解除:  ./scripts/install_launchd.sh uninstall
 set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-LABEL="com.jarvis.assistant"
+LABEL="io.github.takec02.voice-agent"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG="$HOME/Library/Logs/jarvis.log"
+LOG="$HOME/Library/Logs/voice-agent.log"
 
 if [ "$1" = "uninstall" ]; then
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
@@ -23,7 +23,7 @@ cat > "$PLIST" <<PL
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$DIR/.venv/bin/python</string><string>-u</string><string>-m</string><string>jarvis</string></array>
+  <array><string>$DIR/.venv/bin/python</string><string>-u</string><string>-m</string><string>voice_agent</string></array>
   <key>WorkingDirectory</key><string>$DIR</string>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>

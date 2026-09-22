@@ -94,6 +94,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mode == .window { NSApp.activate() }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { MCPManager.shared.terminateProcesses() }
+    }
+
     // 常駐アプリなのでウィンドウを閉じても終了しない
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 

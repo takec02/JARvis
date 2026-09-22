@@ -1,8 +1,8 @@
-"""JARvis: ローカル常駐型の音声対話アシスタント。
+"""ローカル常駐型の音声対話アシスタント。
 
-    python -m jarvis                  # 音声モード（ウェイクワード待機）
-    python -m jarvis --text           # キーボードで会話（動作確認用）
-    python -m jarvis --backend claude # 起動時の AI を指定
+    python -m voice_agent                  # 音声モード（名前での呼びかけを待機）
+    python -m voice_agent --text           # キーボードで会話（動作確認用）
+    python -m voice_agent --backend claude # 起動時の AI を指定
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-class Jarvis:
+class Agent:
     def __init__(self, cfg: dict, backend_name: str):
         self.cfg = cfg
         self.speaker = Speaker(cfg["tts"]["voice"], cfg["tts"]["rate"])
@@ -100,7 +100,7 @@ class Jarvis:
 
     # ---- 音声モード ----
     def run_voice(self):
-        from .audio import Microphone, WakeWord
+        from .audio import Microphone
         from .stt import Transcriber
 
         wake_cfg = self.cfg["wake"]
@@ -108,15 +108,15 @@ class Jarvis:
         stt = Transcriber(self.cfg)
         stt.warmup()
         mic = Microphone(self.cfg)
-        wake = WakeWord(wake_cfg["threshold"]) if wake_cfg["mode"] == "openwakeword" else None
-        keyword = re.compile("|".join(map(re.escape, wake_cfg["keywords"])), re.I)
+        name = self.cfg["assistant"]["name"]
+        words = [name, *wake_cfg["keywords"]]
+        keyword = re.compile("|".join(map(re.escape, [w for w in words if w])), re.I)
         mic.start()
 
-        name = self.cfg["assistant"]["name"]
         self.speaker.say(f"{name}、起動しました。")
         self.speaker.wait()
         mic.flush()
-        hint = '"Hey Jarvis"' if wake else f"「{name}」"
+        hint = f"「{name}」"
         log(f"待機中… {hint} と呼びかけてください / AI: {self.backend.label} ({self.backend.model})")
 
         def listen(timeout):
@@ -131,45 +131,38 @@ class Jarvis:
         def after_speaking():
             self.speaker.wait()
             mic.flush()
-            if wake:
-                wake.reset()
 
         while True:
             # 1) ウェイクワード待ち
-            command = ""
-            if wake:
-                chunk = mic.read()
-                if chunk is None or not wake.detected(chunk):
-                    continue
-            else:
-                heard = listen(None)
-                m = keyword.search(heard)
-                if not m:
-                    continue
-                command = heard[m.end():].strip(" 、,。.!！?？")
+            heard = listen(None)
+            m = keyword.search(heard)
+            if not m:
+                continue
+            command = (heard[:m.start()] + heard[m.end():]).strip(" 、,。.!！?？")
             log("wake!")
             if wake_cfg["chime"]:
                 subprocess.Popen(["afplay", "/System/Library/Sounds/Tink.aiff"])
 
-            # 2) 命令を聞く（「ジャービス、今何時？」のように続けて言われた場合はそのまま使う）
+            # 2) 命令を聞く（「サスケ、今何時？」のように続けて言われた場合はそのまま使う）
             if len(command) < 2:
                 command = listen(self.cfg["audio"]["start_timeout_seconds"])
             if not command:
                 log("聞き取れませんでした。待機に戻ります")
                 continue
 
-            # 3) 応答し、しばらくはウェイクワードなしで会話を続ける
+            # 3) 応答する（followup_seconds を設定すると、しばらくは呼びかけなしで会話を続けられる）
             while command:
                 keep = self.handle(command)
                 after_speaking()
-                if not keep:
+                followup = self.cfg["assistant"]["followup_seconds"]
+                if not keep or followup <= 0:
                     break
-                command = listen(self.cfg["assistant"]["followup_seconds"])
+                command = listen(followup)
             log(f"待機中… {hint}")
 
 
 def main():
-    p = argparse.ArgumentParser(description="JARvis - local voice assistant")
+    p = argparse.ArgumentParser(description="local voice assistant")
     p.add_argument("--text", action="store_true", help="キーボードで会話する（マイク不要）")
     p.add_argument("--backend", help="起動時の AI (local / claude / gpt / gemini)")
     p.add_argument("--config", help="設定ファイルのパス")
@@ -179,15 +172,15 @@ def main():
 
     cfg = load_config(Path(args.config) if args.config else None)
     try:
-        jarvis = Jarvis(cfg, args.backend or cfg["assistant"]["backend"])
+        agent = Agent(cfg, args.backend or cfg["assistant"]["backend"])
     except Exception as e:
         sys.exit(f"起動に失敗しました: {e}")
     try:
-        jarvis.run_text() if args.text else jarvis.run_voice()
+        agent.run_text() if args.text else agent.run_voice()
     except KeyboardInterrupt:
         pass
     finally:
-        jarvis.speaker.stop()
+        agent.speaker.stop()
 
 
 if __name__ == "__main__":

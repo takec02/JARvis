@@ -46,7 +46,11 @@ final class AgentController {
     let settings = AppSettings.shared
     private(set) var state: AgentState = .needsName
     private(set) var liveText = ""
-    private(set) var entries: [ConversationEntry] = []
+    private(set) var entries: [ConversationEntry] = [] {
+        // 常駐アプリなので、画面用の履歴も上限を設けてメモリが増え続けないようにする
+        didSet { if entries.count > Self.maxEntries { entries.removeFirst(entries.count - Self.maxEntries) } }
+    }
+    private static let maxEntries = 200
     /// マイクの音量 (0〜1)。画面のアニメーションに使う
     private(set) var level: Double = 0
 
@@ -217,31 +221,40 @@ final class AgentController {
         let userText = text
         syncVoice()
         Task {
-            entries.append(ConversationEntry(role: "assistant", text: ""))
-            let idx = entries.count - 1
+            let reply = ConversationEntry(role: "assistant", text: "")
+            entries.append(reply)
             var splitter = SentenceSplitter()
             var full = ""
             do {
                 for try await chunk in backend.respond(history: history, user: userText, system: system) {
                     full += chunk
-                    entries[idx].text = full
+                    updateEntry(reply.id, text: full)
                     for sentence in splitter.push(chunk) {
                         speaker.say(sentence)
                         state = .speaking
                     }
                 }
                 speaker.say(splitter.flush())
-                if full.isEmpty { entries.remove(at: idx) }
+                removeEntryIfEmpty(reply.id)
                 history += [ChatMessage(role: "user", content: userText), ChatMessage(role: "assistant", content: full)]
                 history = Array(history.suffix(20))
                 state = .speaking
                 await speaker.waitUntilIdle()
                 openFollowup()
             } catch {
-                if entries[idx].text.isEmpty { entries.remove(at: idx) }
+                removeEntryIfEmpty(reply.id)
                 fail(error)
             }
         }
+    }
+
+    // 画面用の履歴は上限で古いものから消えるため、位置ではなく ID で探す
+    private func updateEntry(_ id: UUID, text: String) {
+        if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].text = text }
+    }
+
+    private func removeEntryIfEmpty(_ id: UUID) {
+        if let i = entries.firstIndex(where: { $0.id == id }), entries[i].text.isEmpty { entries.remove(at: i) }
     }
 
     /// 応答後しばらくは呼びかけなしで話しかけられるようにする

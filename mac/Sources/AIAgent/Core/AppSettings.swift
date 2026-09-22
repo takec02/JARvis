@@ -70,7 +70,7 @@ final class AppSettings {
     /// 呼びかけの言葉。空なら名前を使う
     var wakeWord: String { didSet { d.set(wakeWord, forKey: "wakeWord") } }
     var wakeAliases: String { didSet { d.set(wakeAliases, forKey: "wakeAliases") } }
-    /// ユーザーの呼ばれ方（例: あるじ、トニー）
+    /// ユーザーの呼ばれ方（例: あるじ、殿）
     var userTitle: String { didSet { d.set(userTitle, forKey: "userTitle") } }
     /// 呼ばれ方に付ける敬称（空ならなし）
     var userHonorific: String { didSet { d.set(userHonorific, forKey: "userHonorific") } }

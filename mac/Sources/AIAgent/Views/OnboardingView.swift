@@ -79,7 +79,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     label("YOU ─ あなたの呼ばれ方")
                     HStack(spacing: 10) {
-                        TextField("", text: $userTitle, prompt: Text("例: あるじ、トニー").foregroundStyle(.white.opacity(0.25)))
+                        TextField("", text: $userTitle, prompt: Text("例: あるじ、殿").foregroundStyle(.white.opacity(0.25)))
                             .textFieldStyle(.plain)
                             .font(.system(size: 14))
                             .padding(.horizontal, 12).padding(.vertical, 9)

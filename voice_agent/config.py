@@ -9,16 +9,14 @@ ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULTS: dict = {
     "assistant": {
-        "name": "ジャービス",
-        "user_name": "",
+        "name": "サスケ",
+        "user_title": "あるじ",
         "backend": "local",
-        "followup_seconds": 8.0,
+        "followup_seconds": 0.0,
         "history_turns": 10,
     },
     "wake": {
-        "mode": "openwakeword",  # "openwakeword" | "whisper"
-        "threshold": 0.5,
-        "keywords": ["ジャービス", "ジャーヴィス", "じゃーびす", "jarvis"],
+        "keywords": ["佐助", "さすけ"],  # 名前以外に反応させたい表記（漢字・ひらがなで書き起こされる場合など）
         "chime": True,
     },
     "audio": {

@@ -1,3 +1,3 @@
 #!/bin/zsh
 cd "$(dirname "$0")/.."
-exec .venv/bin/python -u -m jarvis "$@"
+exec .venv/bin/python -u -m voice_agent "$@"

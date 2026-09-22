@@ -15,7 +15,9 @@ enum JMAWeather {
     private static func areas() async throws -> AreaTable {
         if let a = cachedAreas { return a }
         let (data, _) = try await URLSession.shared.data(from: URL(string: "https://www.jma.go.jp/bosai/common/const/area.json")!)
-        let a = try JSONDecoder().decode(AreaTable.self, from: data)
+        guard let a = try? JSONDecoder().decode(AreaTable.self, from: data) else {
+            throw Tools.ToolError(message: "気象庁の地域データを読めません。データ形式が変わった可能性があり、アプリの更新が必要です")
+        }
         cachedAreas = a
         return a
     }
@@ -60,7 +62,7 @@ enum JMAWeather {
         let (data, _) = try await URLSession.shared.data(from: URL(string: "https://www.jma.go.jp/bosai/forecast/data/forecast/\(r.office).json")!)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               let series = root.first?["timeSeries"] as? [[String: Any]] else {
-            throw Tools.ToolError(message: "予報データを読めませんでした")
+            throw Tools.ToolError(message: "気象庁の予報データを読めません。データ形式が変わった可能性があり、アプリの更新が必要です")
         }
         let dayFmt = DateFormatter()
         dayFmt.locale = Locale(identifier: "ja_JP")

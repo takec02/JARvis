@@ -1,4 +1,4 @@
-"""マイク入力・ウェイクワード検出・発話区間の録音。"""
+"""マイク入力と発話区間の録音。"""
 from __future__ import annotations
 
 import collections
@@ -9,7 +9,7 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 
-CHUNK = 1280  # 80ms @16kHz (openWakeWord の推奨フレーム長)
+CHUNK = 1280  # 80ms @16kHz
 VAD_FRAME = 320  # 20ms @16kHz
 
 
@@ -79,25 +79,3 @@ class Microphone:
         if len(voiced) - silent < 3:
             return None
         return np.concatenate(voiced).astype(np.float32) / 32768.0
-
-
-class WakeWord:
-    """openWakeWord の "hey jarvis" モデルでウェイクワードを検出する。"""
-
-    def __init__(self, threshold: float):
-        import openwakeword.utils
-        from openwakeword.model import Model
-
-        openwakeword.utils.download_models(["hey_jarvis"])
-        self.model = Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
-        self.threshold = threshold
-
-    def detected(self, chunk: np.ndarray) -> bool:
-        scores = self.model.predict(chunk)
-        if max(scores.values()) >= self.threshold:
-            self.model.reset()
-            return True
-        return False
-
-    def reset(self):
-        self.model.reset()

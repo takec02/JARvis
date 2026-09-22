@@ -43,6 +43,26 @@ func makeBackend(_ kind: BackendKind, settings: AppSettings) throws -> LLMBacken
 // MARK: - HTTP ヘルパー
 
 enum HTTP {
+    /// よくある失敗を、何を直せばいいか分かるメッセージにする
+    static func friendlyError(status: Int, body: String, model: String?) -> String {
+        let b = body.lowercased()
+        let modelName = model.map { "「\($0)」" } ?? ""
+        switch status {
+        case 401, 403:
+            return "API キーが無効か、権限がありません。設定 → AI でキーを確認してください（HTTP \(status)）"
+        case 404 where b.contains("model"), 400 where b.contains("model") && (b.contains("not") || b.contains("deprecat") || b.contains("invalid") || b.contains("retired")):
+            return "モデル\(modelName)が使えません。提供が終了した可能性があります。設定 → AI でモデル名を新しいものに変えてください"
+        case 400 where b.contains("web_search") || b.contains("tool") && b.contains("type"):
+            return "AI のツール（Web 検索など）の仕様が変わった可能性があります。アプリの更新が必要です（HTTP 400）"
+        case 429:
+            return "利用上限に達しました。しばらく待つか、利用プランを確認してください（HTTP 429）"
+        case 500...599:
+            return "AI サービス側で一時的な障害が起きています。時間をおいて試してください（HTTP \(status)）"
+        default:
+            return "HTTP \(status): \(body.prefix(300))"
+        }
+    }
+
     static func postLines(_ url: String, headers: [String: String], body: [String: Any]) async throws -> AsyncLineSequence<URLSession.AsyncBytes> {
         var req = URLRequest(url: URL(string: url)!, timeoutInterval: 120)
         req.httpMethod = "POST"
@@ -53,7 +73,7 @@ enum HTTP {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             var text = ""
             for try await line in bytes.lines { text += line }
-            throw LLMError(message: "HTTP \(http.statusCode): \(text.prefix(300))")
+            throw LLMError(message: friendlyError(status: http.statusCode, body: text, model: body["model"] as? String))
         }
         return bytes.lines
     }

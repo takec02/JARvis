@@ -40,7 +40,7 @@ private struct GeneralSettings: View {
                     .onSubmit { agent.wakeWordsChanged() }
                 Text("ウェイクワード（または別表記）が聞こえたときだけ反応します。聞き取られにくいときは、読みや別の書き方をカンマ区切りで追加してください。")
                     .font(.caption).foregroundStyle(.secondary)
-                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: あるじ、トニー"))
+                TextField("あなたの呼ばれ方", text: $s.userTitle, prompt: Text("例: あるじ、殿"))
                 Picker("敬称", selection: $s.userHonorific) {
                     ForEach(AppSettings.honorifics, id: \.self) { Text($0.isEmpty ? "なし" : $0).tag($0) }
                 }

@@ -160,6 +160,11 @@ final class MCPManager {
         rebuildToolIndex()
     }
 
+    /// アプリ終了時に、stdio で起動した MCP サーバーのプロセスを確実に止める
+    func terminateProcesses() {
+        for (_, c) in connections { c.process?.terminate() }
+    }
+
     private func disconnectAll() async {
         for (_, c) in connections {
             await c.client.disconnect()

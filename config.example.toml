@@ -1,19 +1,16 @@
 # config.toml にコピーして編集してください:  cp config.example.toml config.toml
-# 書かなかった項目はデフォルト値 (jarvis/config.py) が使われます。
+# 書かなかった項目はデフォルト値 (voice_agent/config.py) が使われます。
 
 [assistant]
-name = "ジャービス"
-user_name = ""            # 例: "トニー" → 「トニー様」と呼ばれる
+name = "サスケ"            # エージェントの名前。この名前で呼びかけると反応する
+user_title = "あるじ"      # あなたの呼ばれ方（例: "あるじ", "殿", "〇〇さん"）
 backend = "local"         # 起動時の AI: local / claude / gpt / gemini（会話中に音声で切り替え可）
-followup_seconds = 8.0    # 応答後、ウェイクワードなしで続けて話せる秒数
+followup_seconds = 0.0    # 応答後、呼びかけなしで続けて話せる秒数（0 ならオフ）
 history_turns = 10        # 覚えておく会話の往復数
 
 [wake]
-# "openwakeword": 英語の "Hey Jarvis" で起動（軽量・常時待機向き）
-# "whisper"     : 「ジャービス、今何時？」のように日本語の名前で起動（CPU/GPU 使用がやや多い）
-mode = "openwakeword"
-threshold = 0.5           # 誤反応が多ければ上げる / 反応が悪ければ下げる
-keywords = ["ジャービス", "ジャーヴィス", "じゃーびす", "jarvis"]   # whisper モード用
+# 名前以外に反応させたい表記。音声認識が漢字やひらがなで書き起こす場合に追加する
+keywords = ["佐助", "さすけ"]
 chime = true
 
 [audio]
@@ -34,7 +31,7 @@ rate = 210
 # ---- AI バックエンド ----
 [backends.local]
 type = "ollama"
-model = "qwen3:8b"        # 例: gemma3:12b, qwen3:4b（速い）
+model = "qwen3:8b"        # 例: gemma3:12b
 keep_alive = "30m"
 think = false             # true にするとツールの使い分けが正確になるが、返答が数秒遅くなる
 

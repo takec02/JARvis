@@ -1,6 +1,6 @@
-# JARvis
+# AIエージェント
 
-Mac に常駐する、ローカル音声対話 AI アシスタント。映画『アイアンマン』の J.A.R.V.I.S. のように、呼びかけるだけで会話や Mac の操作ができます。
+Mac に常駐する、ローカル音声対話 AI アシスタント。自分で名前をつけたエージェントに呼びかけるだけで、会話や Mac の操作、Web 検索ができます。
 
 このリポジトリには2つの版があります。
 
@@ -8,8 +8,8 @@ Mac に常駐する、ローカル音声対話 AI アシスタント。映画『
 |---|---|---|
 | 場所 | [`mac/`](mac/) | このページの以下 |
 | 形 | メニューバー常駐 or ウィンドウのネイティブアプリ | ターミナルで動くスクリプト |
-| 名前 | **初回起動時に自分で名前をつける**（必須） | ジャービス固定 |
-| ウェイクワード | 自由に設定（既定は名前）。それ以外の会話には反応しない | "Hey Jarvis" |
+| 名前 | **初回起動時に自分で名前をつける**（必須） | 設定ファイルで指定（既定: サスケ） |
+| ウェイクワード | 自由に設定（既定は名前）。それ以外の会話には反応しない | 名前（＋設定した別表記） |
 | 音声認識 | macOS 内蔵（追加ダウンロードほぼ不要） | Whisper（1.6GB） |
 | 動作環境 | macOS 26 以降 | macOS 14 以降 |
 
@@ -86,13 +86,13 @@ cd mac
 
 - **完全ローカルで動作**（音声認識・AI・音声合成すべて Mac 内。無料・オフライン可）
 - **AI を切り替え可能**：ローカル (Ollama) / Claude / GPT / Gemini、ほか OpenAI 互換 API。会話中に「クロードに切り替えて」と話すだけで切り替わる
-- **Mac を操作**：時刻・天気・バッテリー、アプリ起動、音量、音楽、Web 検索、ショートカット.app の実行
-- **自然な会話**：応答後の数秒間はウェイクワードなしで続けて話せる。文ごとに順次読み上げるので返事が速い
+- **Mac を操作**：時刻・天気・バッテリー、アプリ起動、音量、音楽、Web 検索（ブラウザで開く）、ショートカット.app の実行
+- **文ごとに順次読み上げ**るので返事が速い
 
 ```
- マイク ─▶ ウェイクワード ─▶ 発話区間検出 ─▶ 音声認識 ─▶ AI (＋ツール) ─▶ 音声合成 ─▶ スピーカー
-          openWakeWord       WebRTC VAD      mlx-whisper   Ollama / Claude     macOS say
-          "Hey Jarvis"                       large-v3-turbo / GPT / Gemini
+ マイク ─▶ 発話区間検出 ─▶ 音声認識 ─▶ 名前の検出 ─▶ AI (＋ツール) ─▶ 音声合成 ─▶ スピーカー
+          WebRTC VAD      mlx-whisper                 Ollama / Claude     macOS say
+                          large-v3-turbo              / GPT / Gemini
 ```
 
 ## 動作環境
@@ -104,8 +104,8 @@ cd mac
 ## セットアップ
 
 ```bash
-git clone https://github.com/takec02/JARvis.git
-cd JARvis
+git clone https://github.com/takec02/JARvis.git ai-agent
+cd ai-agent
 ./scripts/setup.sh
 ```
 
@@ -121,7 +121,7 @@ cd JARvis
 
 初回起動時は音声認識モデル（約 1.6GB）をダウンロードするので数分かかります。マイクの使用許可を求められたら許可してください。
 
-**「Hey Jarvis」** と呼びかけると「チン」と鳴るので、続けて話しかけます。
+設定した名前（既定は「サスケ」）で呼びかけると「チン」と鳴ります。「サスケ、今何時？」のように続けて言っても、呼んでから話しても大丈夫です。
 
 | 話しかける例 | 動作 |
 |---|---|
@@ -133,9 +133,7 @@ cd JARvis
 | 会話をリセットして | 会話の記憶を消去 |
 | ありがとう / おやすみ | 待機状態に戻る |
 
-### 日本語の「ジャービス」で起動したい場合
-
-`config.toml` の `[wake] mode = "whisper"` にすると、「ジャービス、今何時？」のように日本語の名前で呼べます（常に音声認識を回すため、`openwakeword` モードより電力を使います）。
+音声認識が名前を漢字やひらがなで書き起こす場合（例:「佐助」）は、`config.toml` の `[wake] keywords` に追加してください。
 
 ## AI の切り替えと料金
 
@@ -156,39 +154,56 @@ API キーは `.env` に書きます（`.env.example` 参照）。
 
 ```bash
 ./scripts/install_launchd.sh            # 登録（落ちても自動で再起動）
-tail -f ~/Library/Logs/jarvis.log       # ログを見る
+tail -f ~/Library/Logs/voice-agent.log  # ログを見る
 ./scripts/install_launchd.sh uninstall  # 解除
 ```
 
-launchd から起動したプロセスにはマイクの許可ダイアログが出ないことがあります。ログに `wake!` が一切出ず反応しない場合は、先に一度ターミナルから `./scripts/run.sh` を実行してマイクを許可するか、「システム設定 > プライバシーとセキュリティ > マイク」を確認してください。
+launchd から起動したプロセスにはマイクの許可ダイアログが出ないことがあります。ログに認識結果が一切出ず反応しない場合は、先に一度ターミナルから `./scripts/run.sh` を実行してマイクを許可するか、「システム設定 > プライバシーとセキュリティ > マイク」を確認してください。
 
 ## カスタマイズ
 
 設定はすべて `config.toml`（`config.example.toml` をコピーしたもの）にあります。
 
 - **声**: `[tts] voice`。「システム設定 > アクセシビリティ > 読み上げコンテンツ > システムの声」から **Kyoko（拡張）** などの高品質な声を追加すると、より自然になります
-- **呼び名**: `[assistant] user_name = "トニー"` で「トニー様」と呼ばれます
+- **呼ばれ方**: `[assistant] user_title = "殿"` のように指定します（既定は「あるじ」）
 - **ローカル AI のモデル**: `[backends.local] model`。`gemma3:12b` など Ollama で入れたものを指定
-- **ツールの追加**: `jarvis/tools.py` に関数を書き、`TOOLS` と `_FUNCS` に登録するだけで、全ての AI から使えるようになります。コードを書かなくても、ショートカット.app で作ったショートカットは「〇〇を実行して」で呼べます
+- **ツールの追加**: `voice_agent/tools.py` に関数を書き、`TOOLS` と `_FUNCS` に登録するだけで、全ての AI から使えるようになります。コードを書かなくても、ショートカット.app で作ったショートカットは「〇〇を実行して」で呼べます
 
 ## うまく動かないとき
 
-- **反応しない / 誤反応が多い**: `[wake] threshold` を調整（下げると反応しやすく、上げると誤反応が減る）
+- **反応しない**: 認識結果のログを見て、名前がどう書き起こされているかを確認し、`[wake] keywords` に追加する
+- **誤反応が多い**: 日常会話に出てこない名前に変える
 - **話し終わる前に切られる**: `[audio] silence_seconds` を 1.2 などに増やす
 - **ローカル AI が操作せず「しました」とだけ言う**: 小さいローカルモデルはツールの呼び出しを忘れることがあります。`[backends.local] think = true` にすると正確になりますが、返事がかなり遅くなります。Claude / GPT / Gemini なら確実です
 - **ローカル AI の最初の返事が遅い**: モデルの読み込みに 20 秒ほどかかります。以後 30 分はメモリに保持されます（`keep_alive`）
 
 ## 使用しているオープンソース
 
+**Mac アプリ版**（音声認識・音声合成は macOS 標準の機能を使用）
+
 | ライブラリ | 用途 | ライセンス |
 |---|---|---|
-| [openWakeWord](https://github.com/dscripka/openWakeWord) | ウェイクワード検出 | Apache-2.0（学習済みモデル "hey_jarvis" は **CC BY-NC-SA 4.0 / 非商用**） |
+| [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) | MCP クライアント | Apache-2.0（一部 MIT） |
+| [swift-nio](https://github.com/apple/swift-nio) / [swift-log](https://github.com/apple/swift-log) / [swift-system](https://github.com/apple/swift-system) / [swift-collections](https://github.com/apple/swift-collections) / [swift-atomics](https://github.com/apple/swift-atomics) | MCP SDK の依存 | Apache-2.0 |
+| [EventSource](https://github.com/mattt/eventsource) | MCP SDK の依存（SSE） | MIT |
+
+**Python 版**
+
+| ライブラリ | 用途 | ライセンス |
+|---|---|---|
 | [mlx-whisper](https://github.com/ml-explore/mlx-examples) / [Whisper](https://github.com/openai/whisper) | 音声認識 | MIT |
 | [py-webrtcvad](https://github.com/wiseman/py-webrtcvad) | 発話区間検出 | MIT |
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | マイク入力 | MIT |
 | [Ollama](https://github.com/ollama/ollama) | ローカル LLM 実行 | MIT |
 | [Qwen3](https://github.com/QwenLM/Qwen3) | ローカル LLM | Apache-2.0 |
-| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | マイク入力 | MIT |
+
+**利用している外部データ・サービス**
+
+| サービス | 用途 | 条件 |
+|---|---|---|
+| [気象庁](https://www.jma.go.jp/) | 天気予報 | [政府標準利用規約](https://www.jma.go.jp/jma/kishou/info/coment.html)に基づき出典を明記して利用 |
+| [Tavily](https://tavily.com) | Web 検索 | 利用者自身の API キーで利用 |
 
 ## ライセンス
 
-MIT（このリポジトリのコード）。ウェイクワードの学習済みモデルは非商用ライセンスのため、商用利用する場合は独自のモデルを学習するか `mode = "whisper"` を使ってください。
+MIT（このリポジトリのコード）。

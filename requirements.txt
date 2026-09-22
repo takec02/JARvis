@@ -1,8 +1,6 @@
 numpy
 sounddevice
 webrtcvad-wheels
-openwakeword
-onnxruntime
 mlx-whisper
 ollama
 anthropic
