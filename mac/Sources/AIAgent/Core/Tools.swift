@@ -61,6 +61,9 @@ enum Tools {
                  properties: ["place": ["type": "string"]]),
         ToolSpec(name: "open_weathernews", description: "ウェザーニュースの天気ページをブラウザで開く（ユーザーがウェザーニュースで見たいと言ったとき）。place は地名",
                  properties: ["place": ["type": "string"]]),
+        ToolSpec(name: "calculate",
+                 description: "計算をする。割引・税込み・合計・平均・割り算・単位換算など、数値の計算は暗算せず必ずこれを使う。expression は Python の数式（例: 12800*0.7*1.1、round(1234/7, 2)、sqrt(2)、sum([120, 340, 560])）",
+                 properties: ["expression": ["type": "string"]]),
         ToolSpec(name: "run_shortcut", description: "macOS のショートカット.app に登録されたショートカットを名前で実行する",
                  properties: ["name": ["type": "string"]]),
     ]
@@ -157,6 +160,8 @@ enum Tools {
             c.queryItems = [URLQueryItem(name: "q", value: "ウェザーニュース \(place) 天気"), URLQueryItem(name: "btnI", value: "1")]
             NSWorkspace.shared.open(c.url!)
             return "ブラウザでウェザーニュースの\(place)の天気を開きました"
+        case "calculate":
+            return try await Calculator.evaluate(args["expression"] as! String)
         case "run_shortcut":
             let n = args["name"] as! String
             let out = try await shell("/usr/bin/shortcuts", ["run", n], timeout: 60)
@@ -193,6 +198,88 @@ enum Tools {
             do {
                 try p.run()
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if p.isRunning { p.terminate() } }
+            } catch {
+                cont.resume(throwing: error)
+            }
+        }
+    }
+}
+
+/// 数式を Python で計算する。任意のコードは実行せず、構文木を調べて許可した計算だけを行う
+/// （Web ページやメール経由で悪意ある式を渡されても、ファイル操作や通信はできない）
+enum Calculator {
+    private static let script = #"""
+import ast, math, sys
+
+src = sys.stdin.read()
+FUNCS = {
+    "abs": abs, "round": round, "min": min, "max": max, "sum": sum, "int": int, "float": float,
+    "sqrt": math.sqrt, "floor": math.floor, "ceil": math.ceil, "log": math.log, "log10": math.log10,
+    "log2": math.log2, "exp": math.exp, "sin": math.sin, "cos": math.cos, "tan": math.tan,
+    "radians": math.radians, "degrees": math.degrees, "factorial": math.factorial, "gcd": math.gcd,
+}
+CONSTS = {"pi": math.pi, "e": math.e}
+OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd)
+
+def check(node):
+    if isinstance(node, ast.Expression): return check(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool): return
+    if isinstance(node, ast.BinOp) and isinstance(node.op, OPS):
+        check(node.left); check(node.right)
+        if isinstance(node.op, ast.Pow):
+            r = eval(compile(ast.Expression(node.right), "", "eval"), {"__builtins__": {}}, dict(FUNCS, **CONSTS))
+            if abs(r) > 1000: raise ValueError("指数が大きすぎます")
+        return
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, OPS): return check(node.operand)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        for x in node.elts: check(x)
+        return
+    if isinstance(node, ast.Name) and node.id in CONSTS: return
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FUNCS and not node.keywords:
+        if node.func.id == "factorial" and isinstance(node.args[0], ast.Constant) and node.args[0].value > 1000:
+            raise ValueError("大きすぎます")
+        for a in node.args: check(a)
+        return
+    raise ValueError("使えない書き方です: " + type(node).__name__)
+
+try:
+    tree = ast.parse(src.replace("×", "*").replace("÷", "/").replace("^", "**").replace(",", ",").strip(), mode="eval")
+    check(tree)
+    v = eval(compile(tree, "", "eval"), {"__builtins__": {}}, dict(FUNCS, **CONSTS))
+    if isinstance(v, float):
+        v = int(v) if v.is_integer() and abs(v) < 1e15 else float("%.12g" % v)
+    print(v)
+except Exception as ex:
+    print(str(ex))
+    sys.exit(1)
+"""#
+
+    static func evaluate(_ expression: String) async throws -> String {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else {
+            throw Tools.ToolError(message: "Python が見つかりません（xcode-select --install で入ります）")
+        }
+        return try await withCheckedThrowingContinuation { cont in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            p.arguments = ["-I", "-c", script]  // -I: 環境変数やユーザーのパッケージを読まない
+            let input = Pipe(), output = Pipe()
+            p.standardInput = input
+            p.standardOutput = output
+            p.standardError = output
+            p.terminationHandler = { proc in
+                let out = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if proc.terminationStatus == 0 {
+                    cont.resume(returning: "\(expression) = \(out)")
+                } else {
+                    cont.resume(throwing: Tools.ToolError(message: out.isEmpty ? "計算できませんでした" : out))
+                }
+            }
+            do {
+                try p.run()
+                input.fileHandleForWriting.write(Data(expression.utf8))
+                try? input.fileHandleForWriting.close()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if p.isRunning { p.terminate() } }
             } catch {
                 cont.resume(throwing: error)
             }
