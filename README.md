@@ -104,8 +104,8 @@ cd mac
 ## セットアップ
 
 ```bash
-git clone https://github.com/takec02/JARvis.git ai-agent
-cd ai-agent
+git clone https://github.com/takec02/ai-agent-mac.git
+cd ai-agent-mac
 ./scripts/setup.sh
 ```
 
