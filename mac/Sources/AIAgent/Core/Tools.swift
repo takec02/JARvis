@@ -88,7 +88,11 @@ enum Tools {
     }
 
     /// ツールを実行して (結果テキスト, エラーかどうか) を返す
+    /// 呼ばれた回数（「やりました」と言いながらツールを呼んでいない答えを見つけるのに使う）
+    private(set) static var callCount = 0
+
     static func execute(name: String, arguments: Any?) async -> (String, Bool) {
+        callCount += 1
         if MCPManager.shared.handles(name) {
             return await MCPManager.shared.call(name, arguments: arguments, localAllowed: AppSettings.shared.backend == .local)
         }

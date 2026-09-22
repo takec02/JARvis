@@ -606,6 +606,17 @@ final class MCPManager {
 
     /// AI に渡すツール定義（組み込みツールと同じ形式）。クラウドの AI にはローカル専用のサーバーのツールを見せない。
     /// query を渡すと、その話題に関係するツールだけに絞る（ローカル AI 向け）
+    /// よく使うツールは、日本語の説明と、必要な引数だけに絞ったものを渡す
+    /// （サーバーの説明は英語で、引数が30個以上あることもあり、小さいモデルが使いこなせない）
+    private static let toolOverrides: [String: (description: String, keep: [String])] = [
+        "google-personal/manage_event": (
+            "Google カレンダーの予定を作る・変える・消す。action は create / update / delete。予定を入れると頼まれたら必ずこれを呼ぶ。start_time と end_time は 2026-09-23T18:00:00+09:00 の形式。終了時刻が分からなければ開始の1時間後にする",
+            ["action", "summary", "start_time", "end_time", "event_id", "description", "location", "attendees", "calendar_id"]),
+        "google-personal/get_events": (
+            "Google カレンダーの予定を読む。time_min と time_max は 2026-09-23T00:00:00+09:00 の形式",
+            ["time_min", "time_max", "calendar_id", "query"]),
+    ]
+
     func toolSpecs(includeLocalOnly: Bool, query: String? = nil) -> [ToolSpec] {
         var hints: [String]?
         if let query {
@@ -634,7 +645,14 @@ final class MCPManager {
                 }
                 if schema["type"] == nil { schema["type"] = "object" }
                 if schema["properties"] == nil { schema["properties"] = [String: Any]() }
-                let desc = "[\(name)] " + (t.description ?? t.title ?? t.name)
+                var desc = "[\(name)] " + (t.description ?? t.title ?? t.name)
+                if let override = Self.toolOverrides["\(name)/\(t.name)"] {
+                    desc = "[\(name)] " + override.description
+                    var props = schema["properties"] as? [String: Any] ?? [:]
+                    props = props.filter { override.keep.contains($0.key) }
+                    schema["properties"] = props
+                    if let req = schema["required"] as? [String] { schema["required"] = req.filter { props[$0] != nil } }
+                }
                 return ToolSpec(name: Self.exposedName(server: name, tool: t.name), description: desc, schema: schema)
             }
         }

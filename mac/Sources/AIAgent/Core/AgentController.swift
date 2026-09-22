@@ -170,6 +170,13 @@ final class AgentController {
         }
     }
 
+    /// 「登録しました」のように、実行したと言っている答えか（「承知しました」などは含めない）
+    static func claimsDone(_ text: String) -> Bool {
+        let patterns = ["(登録|追加|作成|設定|送信|保存|削除|変更|更新|予約|記録)(し|いたし)(ました|ておきました)",
+                        "(入れ|送り|入力し|書き込み)(ました|ておきました)", "完了(しました|です)"]
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+    }
+
     /// 画像ファイルを渡す（ボタンやドラッグから）
     func attachImage(_ url: URL) {
         do {
@@ -317,6 +324,8 @@ final class AgentController {
             entries.append(reply)
             var splitter = SentenceSplitter()
             var full = ""
+            let toolsBefore = Tools.callCount
+            lastConfirmDeclined = false
             do {
                 for try await chunk in backend.respond(history: sendHistory, user: userText, system: system) {
                     full += chunk
@@ -327,6 +336,40 @@ final class AgentController {
                     }
                 }
                 speaker.say(splitter.flush())
+                // 取りやめたのに「やりました」と言うことがあるので、そのときは言い直す
+                if lastConfirmDeclined, Self.claimsDone(full) {
+                    speaker.stop()
+                    let message = "取りやめましたので、実行していません。"
+                    updateEntry(reply.id, text: message)
+                    full = message
+                    speaker.say(message)
+                }
+                // 小さいモデルは、ツールを呼ばずに「登録しました」と答えることがある。その場合はやり直させる
+                if !lastConfirmDeclined, Tools.callCount == toolsBefore, Self.claimsDone(full) {
+                    Log.write("claimed done without tools; retrying")
+                    await speaker.waitUntilIdle()
+                    speaker.stop()
+                    updateEntry(reply.id, text: "")
+                    full = ""
+                    splitter = SentenceSplitter()
+                    let retry = userText + "\n（システム: 直前の返答はツールを呼んでいないため、実際には何も実行されていません。必ず該当するツールを呼んで実行し、結果だけを短く答えてください。実行できない場合は、できないと正直に答えてください）"
+                    for try await chunk in backend.respond(history: sendHistory, user: retry, system: system) {
+                        full += chunk
+                        updateEntry(reply.id, text: full)
+                        for sentence in splitter.push(chunk) {
+                            speaker.say(sentence)
+                            state = .speaking
+                        }
+                    }
+                    speaker.say(splitter.flush())
+                    if Tools.callCount == toolsBefore, Self.claimsDone(full) {
+                        let warning = "うまく実行できませんでした。もう一度お願いできますか。"
+                        updateEntry(reply.id, text: warning)
+                        full = warning
+                        speaker.stop()
+                        speaker.say(warning)
+                    }
+                }
                 removeEntryIfEmpty(reply.id)
                 let usedLocalOnly = MCPManager.shared.consumeLocalOnlyUsage()
                 history += [ChatMessage(role: "user", content: userText, localOnly: usedLocalOnly),
@@ -396,7 +439,10 @@ final class AgentController {
 
     // MARK: 書き込み前の確認
 
-    /// 書き込み系のツールを実行する前に、声（または画面のボタン）で確認する。20秒答えがなければ中止
+    /// 直前の確認で取りやめたか（AI が「やりました」と言うのを防ぐのに使う）
+    private(set) var lastConfirmDeclined = false
+
+    /// 書き込み系のツールを実行する前に、声（または画面のボタン）で確認する。60秒答えがなければ中止
     func confirm(_ question: String) async -> Bool {
         guard confirmContinuation == nil else { return false }
         await speaker.waitUntilIdle()
@@ -408,12 +454,14 @@ final class AgentController {
         let result = await withCheckedContinuation { cont in
             confirmContinuation = cont
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(60))
                 self?.resolveConfirmation(false, note: "返事がなかったので中止しました")
             }
         }
         listener.muted = true
         state = .thinking
+        lastConfirmDeclined = !result
+        Log.write("confirm: \(result ? "実行" : "取りやめ") — \(question.prefix(60))")
         return result
     }
 
