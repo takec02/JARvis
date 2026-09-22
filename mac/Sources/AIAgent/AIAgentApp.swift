@@ -72,6 +72,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 動作確認用: `AIAgent --mcp-selftest [ツール名 JSON引数]` で MCP の接続とツール呼び出しを表示して終了する
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
+        // 動作確認用: `AIAgent --meeting-selftest` で、別アプリの音声（say）が「相手」として文字起こしされるかを表示して終了する
+        if args.contains("--meeting-selftest") {
+            Task { @MainActor in
+                let rec = MeetingRecorder()
+                do {
+                    try await rec.start()
+                    let say = Process()
+                    say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+                    say.arguments = ["-v", "Kyoko", "本日の議題は新製品の発売日です。発売は十月一日に決定しました。山田さんは来週金曜までに見積もりを出してください。"]
+                    try say.run()
+                    say.waitUntilExit()
+                    try await Task.sleep(for: .seconds(4))
+                    let text = await rec.stop()
+                    print("transcript:\n\(text)\nfile: \(rec.fileURL?.path ?? "-")")
+                } catch {
+                    print("error: \(error.localizedDescription)")
+                }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --oauth-selftest <名前>` でログインを実行し、接続状況を表示して終了する
+        if let j = args.firstIndex(of: "--oauth-selftest"), args.count > j + 1 {
+            Task { @MainActor in
+                let mcp = MCPManager.shared
+                await mcp.reload()
+                do { try await mcp.login(args[j + 1]); print("login ok") } catch { print("login error: \(error.localizedDescription)") }
+                print("loggedIn: \(OAuthManager.shared.loggedIn)")
+                exit(0)
+            }
+            return
+        }
         guard let i = args.firstIndex(of: "--mcp-selftest") else { return }
         Task { @MainActor in
             let mcp = MCPManager.shared

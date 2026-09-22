@@ -284,6 +284,18 @@ struct HUDView: View {
                     .lineLimit(2)
             }
             Spacer()
+            if agent.meeting.isRecording, let start = agent.meeting.startedAt {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let sec = Int(ctx.date.timeIntervalSince(start))
+                    HStack(spacing: 5) {
+                        Circle().fill(.red).frame(width: 7, height: 7)
+                        Text(String(format: "REC %d:%02d", sec / 60, sec % 60))
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(.trailing, 6)
+            }
             Text(agent.settings.backend.shortLabel.uppercased())
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .tracking(1.5)
@@ -354,6 +366,10 @@ struct HUDView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("AI を切り替え")
+            HUDButton(symbol: agent.meeting.isRecording ? "stop.circle.fill" : "record.circle", tint: agent.meeting.isRecording ? .red : tint,
+                      help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
+                agent.toggleMeeting()
+            }
             HUDButton(symbol: "trash", tint: tint, help: "会話を消去") { agent.clearConversation() }
             HUDButton(symbol: "gearshape", tint: tint, help: "設定") {
                 NSApp.activate()

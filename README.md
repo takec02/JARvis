@@ -46,6 +46,8 @@ cd mac
 | 自然な声にする | 「システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 → 声を管理」から、男性なら **Otoya**、女性なら **Kyoko** の「拡張」または「プレミアム」を追加（自動で使われます） |
 | 音楽の操作 | 初回に「ミュージックを操作する許可」のダイアログが出たら許可 |
 | 他のアプリとの連携（MCP） | 連携先の MCP サーバーを設定 → 連携 から追加（下記「MCP サーバーの追加」） |
+| Google（Gmail・カレンダー・Drive など） | Google Cloud でクライアントを作り、設定 → 連携 →「Google を追加」で登録（[準備の手順](docs/google-setup.md)） |
+| 会議の記録 | 初回に「システムオーディオの録音」の許可ダイアログが出たら許可 |
 
 > Claude Pro / ChatGPT Plus などの月額プランでは API は使えません。API は別契約の従量課金です。
 
@@ -57,6 +59,8 @@ cd mac
 - AI はローカル (Ollama) / Claude / GPT / Gemini を設定画面か音声で切り替え。API キーはキーチェーンに保存
 - **MCP（Model Context Protocol）対応**: MCP サーバーのツールを、どの AI からでも使えます（下記）
 - **Web 検索**:「〇〇を調べて」でインターネットを検索し、ページも読んで答えます。ローカル・GPT・Gemini では [Tavily](https://tavily.com)（月1,000回まで無料、設定 → AI で API キーを登録）、Claude では Claude 内蔵の Web 検索（Anthropic Console で Web 検索を有効にしておく必要あり）を使います
+- **会議の記録と要約**:「会議を記録して」（または画面の ● ボタン）で、Meet・Zoom・Teams など Mac で鳴っている相手の声と、マイクの自分の声を分けて文字起こしします。「会議を終了して」で、選んでいる AI が要約・決定事項・宿題をまとめて読み上げ、議事録を `書類/AIエージェント/議事録/` に保存します（議事録は会議中から少しずつ書き込むので、途中でアプリが落ちても残ります）。ヘッドホンを使うと、相手の声がマイクに入らず「自分」「相手」の区別が正確になります
+- **Google 連携**: 会社の Google Workspace は Google 公式の MCP サーバー、個人の Gmail は有志の MCP サーバーでつなぎます。ブラウザでのログインに対応し、ログイン情報はキーチェーンに保存・自動更新します（[準備の手順](docs/google-setup.md)）
 - **天気**: 気象庁のデータで今日・明日の天気・降水確率・予想気温を答えます（市区町村名でも可）。「ウェザーニュースで見せて」でウェザーニュースのページをブラウザで開きます（同サイトは規約で自動取得が禁止されているため、中身は読みに行きません）
 - ウェイクワードは**1語で、日常会話に出てこない言葉**がおすすめです。「ヘイ ◯◯」のような短い語を含む言葉は聞き取りが不安定になりがちです。また、人名をウェイクワードにすると、その人物の話題（例:「信長の話」）でも反応します
 
@@ -188,6 +192,7 @@ launchd から起動したプロセスにはマイクの許可ダイアログが
 | [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) | MCP クライアント | Apache-2.0（一部 MIT） |
 | [swift-nio](https://github.com/apple/swift-nio) / [swift-log](https://github.com/apple/swift-log) / [swift-system](https://github.com/apple/swift-system) / [swift-collections](https://github.com/apple/swift-collections) / [swift-atomics](https://github.com/apple/swift-atomics) | MCP SDK の依存 | Apache-2.0 |
 | [EventSource](https://github.com/mattt/eventsource) | MCP SDK の依存（SSE） | MIT |
+| [workspace-mcp](https://github.com/taylorwilsdon/google_workspace_mcp) | 個人の Google アカウント用 MCP サーバー（任意、利用時に uvx で取得） | MIT |
 
 **Python 版**
 

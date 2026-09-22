@@ -54,6 +54,9 @@ final class AgentController {
     /// マイクの音量 (0〜1)。画面のアニメーションに使う
     private(set) var level: Double = 0
 
+    /// 会議の記録（画面の REC 表示にも使う）
+    let meeting = MeetingRecorder()
+
     private var history: [ChatMessage] = []
     private let listener = SpeechListener()
     private let speaker = Speaker()
@@ -136,6 +139,8 @@ final class AgentController {
         guard state == .idle || state == .listening else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // 会議の記録中は、マイクで聞き取った確定文を「自分」の発言として残す
+        if isFinal, meeting.isRecording { meeting.add(speaker: "自分", text: trimmed) }
         liveText = trimmed
         let matcher = WakeMatcher(words: settings.wakeWords)
 
@@ -199,6 +204,8 @@ final class AgentController {
         liveText = ""
         listener.muted = true
         entries.append(ConversationEntry(role: "user", text: text))
+
+        if handleMeetingCommand(text) { return }
 
         if let reply = localCommand(text) {
             entries.append(ConversationEntry(role: "system", text: reply.message))
@@ -299,6 +306,128 @@ final class AgentController {
         state = .speaking
         speaker.say(text)
         await speaker.waitUntilIdle()
+    }
+
+    // MARK: 会議の記録
+
+    func toggleMeeting() {
+        meeting.isRecording ? finishMeeting() : startMeeting()
+    }
+
+    /// 「会議を記録して」「会議を終了して」「議事録を開いて」などを処理したら true
+    private func handleMeetingCommand(_ text: String) -> Bool {
+        let about = ["会議", "議事録", "ミーティング", "打ち合わせ"].contains(where: text.contains)
+        let stop = ["止め", "終わ", "終了", "停止", "ストップ", "要約", "まとめ"].contains(where: text.contains)
+        let start = ["記録", "録音", "取って", "とって", "開始", "始め", "スタート"].contains(where: text.contains)
+        if about, ["開いて", "見せて", "フォルダ"].contains(where: text.contains), !start || text.contains("議事録を開") {
+            try? FileManager.default.createDirectory(at: MeetingRecorder.folder, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(meeting.fileURL ?? MeetingRecorder.folder)
+            Task { await speakAndWait("議事録を開きました。"); setIdle() }
+            return true
+        }
+        if meeting.isRecording, (about && stop) || text.hasPrefix("要約して") {
+            finishMeeting()
+            return true
+        }
+        if about, start, !stop {
+            if meeting.isRecording {
+                Task { await speakAndWait("すでに会議を記録しています。"); setIdle() }
+            } else {
+                startMeeting()
+            }
+            return true
+        }
+        if about, stop, !meeting.isRecording, !text.contains("議事録") {
+            Task { await speakAndWait("今は会議を記録していません。"); setIdle() }
+            return true
+        }
+        return false
+    }
+
+    private func startMeeting() {
+        Task {
+            do {
+                try await meeting.start()
+                entries.append(ConversationEntry(role: "system", text: "● 会議の記録を始めました"))
+                await speakAndWait("会議の記録を始めます。")
+                setIdle()
+            } catch {
+                fail(error)
+            }
+        }
+    }
+
+    private func finishMeeting() {
+        Task {
+            let transcript = await meeting.stop()
+            entries.append(ConversationEntry(role: "system", text: "■ 会議の記録を終了しました"))
+            guard transcript.count > 20 else {
+                await speakAndWait("記録された発言がほとんどありませんでした。")
+                setIdle()
+                return
+            }
+            state = .thinking
+            listener.muted = true
+            do {
+                let backend = try makeBackend(settings.backend, settings: settings)
+                let markdown = try await summarizeMeeting(transcript, with: backend)
+                meeting.writeSummary(markdown)
+                let spoken = Self.section("要約", in: markdown) ?? String(markdown.prefix(300))
+                entries.append(ConversationEntry(role: "assistant", text: spoken))
+                // あとで「宿題なんだっけ？」と聞けるよう、要約を会話の記憶に残す
+                history += [ChatMessage(role: "user", content: "（さっきの会議の記録を要約して）"),
+                            ChatMessage(role: "assistant", content: markdown)]
+                history = Array(history.suffix(20))
+                await speakAndWait(spoken + " 議事録は、書類の AIエージェントのフォルダに保存しました。")
+                setIdle()
+            } catch {
+                fail(error)
+            }
+        }
+    }
+
+    /// 文字起こしを要約する。長い会議は分割して要点を抜き出してからまとめる
+    private func summarizeMeeting(_ transcript: String, with backend: LLMBackend) async throws -> String {
+        let format = """
+        あなたは会議の議事録係です。入力は会議の文字起こしで、音声認識のため誤字や聞き間違いを含みます。        「自分」はユーザー（\(settings.userAddress)）、「相手」はほかの参加者です（相手が複数でも区別されていません）。
+        次の形式の Markdown で、日本語で書いてください。入力にないことは書かないでください。
+        ## 要約
+        （3〜5文で、話し言葉で読み上げやすく）
+        ## 決定事項
+        - （なければ「なし」）
+        ## 宿題
+        - 担当: 内容（期限が分かれば）（なければ「なし」）
+        ## 主な論点
+        - 
+        """
+        func collect(system: String, user: String) async throws -> String {
+            var out = ""
+            for try await chunk in backend.respond(history: [], user: user, system: system) { out += chunk }
+            return out
+        }
+        let limit = 12_000
+        if transcript.count <= limit { return try await collect(system: format, user: transcript) }
+        let extract = "入力は会議の文字起こしの一部です。重要な発言・決定・宿題（担当と期限）を、箇条書きで漏れなく抜き出してください。"
+        var notes: [String] = []
+        var chunk = ""
+        for line in transcript.split(separator: "\n") {
+            if chunk.count + line.count > 10_000 {
+                notes.append(try await collect(system: extract, user: chunk))
+                chunk = ""
+            }
+            chunk += line + "\n"
+        }
+        if !chunk.isEmpty { notes.append(try await collect(system: extract, user: chunk)) }
+        return try await collect(system: format + "\n入力は、長い会議を分割して抜き出したメモです。", user: notes.joined(separator: "\n\n"))
+    }
+
+    /// Markdown から「## 見出し」の本文だけを取り出す
+    private static func section(_ title: String, in markdown: String) -> String? {
+        guard let r = markdown.range(of: "## \(title)") else { return nil }
+        let rest = markdown[r.upperBound...]
+        let body = rest.range(of: "\n## ").map { rest[..<$0.lowerBound] } ?? rest
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     /// AI に渡さずに処理する命令（スタンバイ・履歴リセット・AI 切り替え）

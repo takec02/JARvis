@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MCP
 import Observation
@@ -24,10 +25,14 @@ struct MCPServerConfig: Codable, Equatable {
     var discovery: String?
     var disabled: Bool?
     var localOnly: Bool?
+    /// ログインに使う OAuth 設定の名前（mcp.json の "oauth" のキー）。Google 公式 MCP サーバーなど
+    var oauth: String?
 }
 
 struct MCPConfigFile: Codable {
     var mcpServers: [String: MCPServerConfig]
+    /// ブラウザでログインする MCP サーバー用の設定。複数のサーバーで1つのログインを共有できる
+    var oauth: [String: OAuthConfig]?
 }
 
 enum MCPStatus: Equatable {
@@ -64,6 +69,8 @@ final class MCPManager {
     }
 
     private var configs: [String: MCPServerConfig] = [:]
+    private(set) var oauthConfigs: [String: OAuthConfig] = [:]
+    private var tokenBoxes: [String: TokenBox] = [:]
     private var connections: [String: Connection] = [:]
     /// AI に見せるツール名 → (サーバー名, 元のツール名)
     private var toolIndex: [String: (server: String, tool: String)] = [:]
@@ -114,13 +121,17 @@ final class MCPManager {
         await disconnectAll()
         do {
             let data = try Data(contentsOf: Self.configURL)
-            configs = try JSONDecoder().decode(MCPConfigFile.self, from: data).mcpServers
+            let file = try JSONDecoder().decode(MCPConfigFile.self, from: data)
+            configs = file.mcpServers
+            oauthConfigs = file.oauth ?? [:]
             configError = nil
         } catch {
             configs = [:]
+            oauthConfigs = [:]
             configError = "設定ファイルを読めません: \(error.localizedDescription)"
         }
         serverNames = configs.keys.sorted()
+        OAuthManager.shared.refreshLoginState(Array(oauthConfigs.keys))
         for name in serverNames {
             status[name] = configs[name]?.disabled == true ? .disabled : .connecting
         }
@@ -139,10 +150,106 @@ final class MCPManager {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard let self else { return }
+                await self.refreshTokens()
                 for name in self.serverNames where self.connections[name] == nil && self.configs[name]?.disabled != true {
                     await self.connect(name)
                 }
             }
+        }
+    }
+
+    /// ログイン済みのトークンを、期限が切れる前に更新して接続中のサーバーに渡す
+    private func refreshTokens() async {
+        for (name, box) in tokenBoxes {
+            guard let oc = oauthConfigs[name] else { continue }
+            if let t = try? await OAuthManager.shared.accessToken(name, config: oc) { box.token = t }
+        }
+    }
+
+    /// 設定画面の「ログイン」。成功したら、そのログインを使うサーバーにつなぎ直す
+    func login(_ oauthName: String) async throws {
+        guard let oc = oauthConfigs[oauthName] else { return }
+        try await OAuthManager.shared.login(oauthName, config: oc)
+        for name in serverNames where configs[name]?.oauth == oauthName && configs[name]?.disabled != true {
+            status[name] = .connecting
+            await connect(name)
+        }
+    }
+
+    func logout(_ oauthName: String) async {
+        OAuthManager.shared.logout(oauthName)
+        for name in serverNames where configs[name]?.oauth == oauthName {
+            if let c = connections[name] { await c.client.disconnect() }
+            connections[name] = nil
+            status[name] = .unavailable(OAuthError.needsLogin.message)
+        }
+        rebuildToolIndex()
+    }
+
+    // MARK: Google の追加（設定画面から）
+
+    struct GoogleService: Identifiable, Hashable {
+        let id: String
+        let label: String
+        let url: String
+        let scopes: [String]
+    }
+
+    /// Google 公式の Workspace MCP サーバー（開発者プレビュー。Google Workspace アカウントが必要）
+    static let googleServices: [GoogleService] = [
+        .init(id: "gmail", label: "Gmail", url: "https://gmailmcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"]),
+        .init(id: "calendar", label: "カレンダー", url: "https://calendarmcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+                       "https://www.googleapis.com/auth/calendar.events.freebusy",
+                       "https://www.googleapis.com/auth/calendar.events.readonly"]),
+        .init(id: "drive", label: "Drive", url: "https://drivemcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file"]),
+        .init(id: "docs", label: "ドキュメント", url: "https://docsmcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]),
+        .init(id: "sheets", label: "スプレッドシート", url: "https://sheetsmcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/spreadsheets.readonly"]),
+    ]
+
+    private func updateConfigFile(_ change: (inout MCPConfigFile) -> Void) async throws {
+        ensureConfigFile()
+        let data = try Data(contentsOf: Self.configURL)
+        var file = try JSONDecoder().decode(MCPConfigFile.self, from: data)
+        change(&file)
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try enc.encode(file).write(to: Self.configURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.configURL.path)
+        await reload()
+    }
+
+    /// 会社の Google Workspace（公式 MCP サーバー）を追加する。ログインは設定画面の「ログイン」から
+    func addGoogleWorkspace(clientId: String, clientSecret: String, services: Set<String>, localOnly: Bool) async throws {
+        let chosen = Self.googleServices.filter { services.contains($0.id) }
+        guard !chosen.isEmpty else { return }
+        try await updateConfigFile { file in
+            for svc in Self.googleServices { file.mcpServers["google-work-\(svc.id)"] = nil }
+            for svc in chosen {
+                file.mcpServers["google-work-\(svc.id)"] = MCPServerConfig(url: svc.url, localOnly: localOnly ? true : nil, oauth: "google-work")
+            }
+            var oauth = file.oauth ?? [:]
+            var scopes: [String] = []
+            for sc in chosen.flatMap(\.scopes) where !scopes.contains(sc) { scopes.append(sc) }
+            oauth["google-work"] = OAuthConfig(clientId: clientId, clientSecret: clientSecret.isEmpty ? nil : clientSecret, scopes: scopes)
+            file.oauth = oauth
+        }
+    }
+
+    /// 個人の Gmail など（有志の workspace-mcp を Mac の中で動かす）を追加する。ログインは初めて使うときにブラウザで
+    func addGooglePersonal(clientId: String, clientSecret: String, email: String, localOnly: Bool) async throws {
+        try await updateConfigFile { file in
+            file.mcpServers["google-personal"] = MCPServerConfig(
+                command: "uvx",
+                args: ["workspace-mcp", "--single-user", "--tool-tier", "core", "--permissions",
+                       "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly"],
+                env: ["GOOGLE_OAUTH_CLIENT_ID": clientId, "GOOGLE_OAUTH_CLIENT_SECRET": clientSecret,
+                      "USER_GOOGLE_EMAIL": email, "OAUTHLIB_INSECURE_TRANSPORT": "1"],
+                localOnly: localOnly ? true : nil)
         }
     }
 
@@ -160,9 +267,19 @@ final class MCPManager {
                 transport = t
             } else {
                 let (url, headers) = try resolveHTTP(config)
+                // ログインが必要なサーバーは、リクエストのたびに最新のアクセストークンを付ける
+                var box: TokenBox?
+                if let oauthName = config.oauth {
+                    guard let oc = oauthConfigs[oauthName] else { throw MCPSetupError("OAuth 設定「\(oauthName)」が mcp.json にありません") }
+                    let b = tokenBoxes[oauthName] ?? TokenBox()
+                    tokenBoxes[oauthName] = b
+                    b.token = try await OAuthManager.shared.accessToken(oauthName, config: oc)
+                    box = b
+                }
                 transport = HTTPClientTransport(endpoint: url, streaming: true, requestModifier: { request in
                     var r = request
                     headers.forEach { r.setValue($1, forHTTPHeaderField: $0) }
+                    if let box { r.setValue("Bearer \(box.token)", forHTTPHeaderField: "Authorization") }
                     return r
                 })
             }
@@ -246,6 +363,7 @@ final class MCPManager {
 
     private static func describe(_ error: Error, name: String, config: MCPServerConfig) -> String {
         if let e = error as? MCPSetupError { return e.message }
+        if let e = error as? OAuthError { return e.message }
         if error is TimeoutError { return "応答がありません（タイムアウト）" }
         if error.localizedDescription.localizedCaseInsensitiveContains("connection closed") {
             return "接続を閉じられました（相手のアプリが起動していないか、連携が OFF の可能性があります）"

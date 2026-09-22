@@ -274,6 +274,7 @@ private struct VoiceSettings: View {
 private struct MCPSettings: View {
     @State private var mcp = MCPManager.shared
     @State private var reloading = false
+    @State private var loginError: String?
 
     var body: some View {
         Form {
@@ -313,6 +314,31 @@ private struct MCPSettings: View {
             } footer: {
                 Text("接続したサーバーのツールは、どの AI からも使えます。未接続のサーバーには1分ごとにつなぎ直します。")
             }
+            GoogleSetupSection()
+            if !mcp.oauthConfigs.isEmpty {
+                Section("ログイン") {
+                    ForEach(mcp.oauthConfigs.keys.sorted(), id: \.self) { name in
+                        HStack {
+                            Text(name)
+                            Spacer()
+                            if OAuthManager.shared.loggingIn == name {
+                                ProgressView().controlSize(.small)
+                                Text("ブラウザでログインしてください").font(.caption).foregroundStyle(.secondary)
+                            } else if OAuthManager.shared.loggedIn.contains(name) {
+                                Label("ログイン済み", systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
+                                Button("ログアウト") { Task { await mcp.logout(name) } }
+                            } else {
+                                Button("ログイン") {
+                                    Task {
+                                        do { try await mcp.login(name); loginError = nil } catch { loginError = error.localizedDescription }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
+                }
+            }
             Section {
                 HStack {
                     Button("設定ファイルを開く") {
@@ -349,4 +375,72 @@ private struct MCPSettings: View {
         case .unavailable: .orange
         }
     }
+}
+
+/// Google を連携先に追加するフォーム（会社の Workspace ＝公式、個人の Gmail ＝有志の MCP サーバー）
+private struct GoogleSetupSection: View {
+    @State private var mcp = MCPManager.shared
+    @State private var workId = ""
+    @State private var workSecret = ""
+    @State private var workServices: Set<String> = ["gmail", "calendar", "drive", "docs", "sheets"]
+    @State private var workLocal = false
+    @State private var personalId = ""
+    @State private var personalSecret = ""
+    @State private var personalEmail = ""
+    @State private var personalLocal = false
+    @State private var message: String?
+
+    var body: some View {
+        Section {
+            DisclosureGroup("会社の Google Workspace（Google 公式）") {
+                TextField("OAuth クライアント ID", text: $workId)
+                SecureField("クライアント シークレット", text: $workSecret)
+                HStack {
+                    ForEach(MCPManager.googleServices) { svc in
+                        Toggle(svc.label, isOn: Binding(
+                            get: { workServices.contains(svc.id) },
+                            set: { on in if on { workServices.insert(svc.id) } else { workServices.remove(svc.id) } }
+                        ))
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                Toggle("ローカル AI 専用にする", isOn: $workLocal)
+                Button("追加する") {
+                    Task {
+                        do {
+                            try await mcp.addGoogleWorkspace(clientId: trim(workId), clientSecret: trim(workSecret), services: workServices, localOnly: workLocal)
+                            message = "追加しました。下の「ログイン」から Google にログインしてください。"
+                        } catch { message = error.localizedDescription }
+                    }
+                }
+                .disabled(trim(workId).isEmpty || workServices.isEmpty)
+                Text("開発者プレビューへの参加（Workspace の管理者が申し込み）と、Google Cloud での準備が必要です。ログイン後の戻り先に http://127.0.0.1:8723/oauth2callback を登録してください。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            DisclosureGroup("個人の Gmail など（有志の MCP サーバー）") {
+                TextField("OAuth クライアント ID", text: $personalId)
+                SecureField("クライアント シークレット", text: $personalSecret)
+                TextField("Gmail アドレス", text: $personalEmail)
+                Toggle("ローカル AI 専用にする", isOn: $personalLocal)
+                Button("追加する") {
+                    Task {
+                        do {
+                            try await mcp.addGooglePersonal(clientId: trim(personalId), clientSecret: trim(personalSecret), email: trim(personalEmail), localOnly: personalLocal)
+                            message = "追加しました。初めて使うときに、ブラウザで Google のログイン画面が開きます。"
+                        } catch { message = error.localizedDescription }
+                    }
+                }
+                .disabled(trim(personalId).isEmpty || trim(personalSecret).isEmpty || trim(personalEmail).isEmpty)
+                Text("Gmail は下書きの作成まで（送信はしない）、カレンダーは予定の追加まで、Drive・ドキュメント・スプレッドシートは読むだけの権限で動かします。ログイン後の戻り先に http://localhost:8000/oauth2callback を登録してください。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+        } header: {
+            Text("Google を追加")
+        } footer: {
+            Link("準備の手順（Google Cloud の設定）", destination: URL(string: "https://github.com/takec02/ai-agent-mac/blob/main/docs/google-setup.md")!)
+        }
+    }
+
+    private func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
 }
