@@ -74,7 +74,8 @@ final class MCPManager {
     // MARK: 設定ファイル
 
     private static let defaultConfig = MCPConfigFile(mcpServers: [
-        "yuhitsu": MCPServerConfig(discovery: "~/Library/Application Support/Yuhitsu/mcp.json", localOnly: true),
+        // 右筆に同梱の中継コマンド（右筆のサンドボックス内の接続情報を読み、起動中の右筆につなぐ）
+        "yuhitsu": MCPServerConfig(command: "/Applications/ゆうひつ.app/Contents/MacOS/yuhitsu-mcp", localOnly: true),
     ])
 
     /// ローカル AI 専用のサーバーか（右筆は、設定ファイルに書かれていなくても既定でローカル専用）
@@ -218,9 +219,14 @@ final class MCPManager {
 
     /// コマンドを起動し、標準入出力で MCP を話す
     private func launchStdio(command: String, args: [String], env: [String: String]) throws -> (Process, StdioTransport) {
+        // 絶対パスのコマンドが無ければ、起動を試さずに「未インストール」とする（1分ごとの再接続で無駄に起動しないように）
+        let path = (command as NSString).expandingTildeInPath
+        if path.hasPrefix("/"), !FileManager.default.isExecutableFile(atPath: path) {
+            throw MCPSetupError("インストールされていません")
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = [command] + args.map { ($0 as NSString).expandingTildeInPath }
+        p.arguments = [path] + args.map { ($0 as NSString).expandingTildeInPath }
         // GUI アプリは PATH が最小限なので、Homebrew などの場所を足す
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (environment["PATH"] ?? "")
@@ -241,6 +247,9 @@ final class MCPManager {
     private static func describe(_ error: Error, name: String, config: MCPServerConfig) -> String {
         if let e = error as? MCPSetupError { return e.message }
         if error is TimeoutError { return "応答がありません（タイムアウト）" }
+        if error.localizedDescription.localizedCaseInsensitiveContains("connection closed") {
+            return "接続を閉じられました（相手のアプリが起動していないか、連携が OFF の可能性があります）"
+        }
         return "接続できません: \(error.localizedDescription)"
     }
 
