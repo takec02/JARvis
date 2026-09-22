@@ -209,6 +209,8 @@ final class MCPManager {
               scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]),
         .init(id: "sheets", label: "スプレッドシート", url: "https://sheetsmcp.googleapis.com/mcp/v1",
               scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/spreadsheets.readonly"]),
+        .init(id: "slides", label: "スライド", url: "https://slidesmcp.googleapis.com/mcp/v1",
+              scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/presentations.readonly"]),
     ]
 
     private func updateConfigFile(_ change: (inout MCPConfigFile) -> Void) async throws {
@@ -246,7 +248,7 @@ final class MCPManager {
             file.mcpServers["google-personal"] = MCPServerConfig(
                 command: "uvx",
                 args: ["workspace-mcp", "--single-user", "--tool-tier", "core", "--permissions",
-                       "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly"],
+                       "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly", "slides:readonly"],
                 env: ["GOOGLE_OAUTH_CLIENT_ID": clientId, "GOOGLE_OAUTH_CLIENT_SECRET": clientSecret,
                       "USER_GOOGLE_EMAIL": email, "OAUTHLIB_INSECURE_TRANSPORT": "1"],
                 localOnly: localOnly ? true : nil)

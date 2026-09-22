@@ -382,7 +382,7 @@ private struct GoogleSetupSection: View {
     @State private var mcp = MCPManager.shared
     @State private var workId = ""
     @State private var workSecret = ""
-    @State private var workServices: Set<String> = ["gmail", "calendar", "drive", "docs", "sheets"]
+    @State private var workServices: Set<String> = ["gmail", "calendar", "drive", "docs", "sheets", "slides"]
     @State private var workLocal = false
     @State private var personalId = ""
     @State private var personalSecret = ""
@@ -431,7 +431,7 @@ private struct GoogleSetupSection: View {
                     }
                 }
                 .disabled(trim(personalId).isEmpty || trim(personalSecret).isEmpty || trim(personalEmail).isEmpty)
-                Text("Gmail は下書きの作成まで（送信はしない）、カレンダーは予定の追加まで、Drive・ドキュメント・スプレッドシートは読むだけの権限で動かします。ログイン後の戻り先に http://localhost:8000/oauth2callback を登録してください。")
+                Text("Gmail は下書きの作成まで（送信はしない）、カレンダーは予定の追加まで、Drive・ドキュメント・スプレッドシート・スライドは読むだけの権限で動かします。ログイン後の戻り先に http://localhost:8000/oauth2callback を登録してください。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }

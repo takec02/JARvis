@@ -1,14 +1,14 @@
 # Google 連携の準備
 
-AIエージェントから Google（Gmail・カレンダー・Drive・ドキュメント・スプレッドシート）を使うための準備です。
+AIエージェントから Google（Gmail・カレンダー・Drive・ドキュメント・スプレッドシート・スライド）を使うための準備です。
 使う Google アカウントの種類によって、方法が2つあります。
 
 | | 会社の Google Workspace | 個人の Gmail（@gmail.com） |
 |---|---|---|
 | 使う MCP サーバー | Google 公式（開発者プレビュー） | 有志の [workspace-mcp](https://github.com/taylorwilsdon/google_workspace_mcp)（MIT、Mac の中で動く） |
 | 追加の条件 | Workspace の管理者が開発者プレビューに申し込む | [uv](https://github.com/astral-sh/uv)（`brew install uv`） |
-| できること | Gmail の検索・閲覧・下書き、カレンダーの閲覧、Drive・ドキュメント・スプレッドシートの閲覧 | Gmail の検索・閲覧、カレンダーの閲覧・予定の追加、Drive・ドキュメント・スプレッドシートの閲覧 |
-| 送信・削除 | しない | しない（Gmail は下書きまで、Drive などは読むだけの権限で動かす） |
+| できること | Gmail の検索・閲覧・下書き、カレンダーの閲覧、Drive・ドキュメント・スプレッドシート・スライドの閲覧 | Gmail の検索・閲覧、カレンダーの閲覧・予定の追加、Drive・ドキュメント・スプレッドシート・スライドの閲覧 |
+| 送信・削除 | しない | しない（Gmail は下書きまで、Drive・ドキュメント・スプレッドシート・スライドは読むだけの権限で動かす） |
 
 どちらも、最後は AIエージェントの **設定 → 連携 →「Google を追加」** に、Google Cloud で作ったクライアント ID とシークレットを入力します。
 
@@ -22,12 +22,13 @@ AIエージェントから Google（Gmail・カレンダー・Drive・ドキュ�
    [Google Cloud コンソール](https://console.cloud.google.com/) にログインし、画面上部のプロジェクト選択 →「新しいプロジェクト」で作成します（名前は自由。例: `ai-agent`）。
 
 2. **API を有効にする**
-   「API とサービス → ライブラリ」で、次の5つを検索してそれぞれ「有効にする」を押します。
+   「API とサービス → ライブラリ」で、次の6つを検索してそれぞれ「有効にする」を押します。
    - Gmail API
    - Google Calendar API
    - Google Drive API
    - Google Docs API
    - Google Sheets API
+   - Google Slides API
 
 3. **同意画面を設定する**
    「Google Auth Platform」（または「OAuth 同意画面」）で次のように設定します。
@@ -67,7 +68,7 @@ Google 公式の Workspace MCP サーバーは **開発者プレビュー** で�
    [gcloud CLI](https://cloud.google.com/sdk/docs/install) で、次を実行します（`PROJECT_ID` は作ったプロジェクトの ID）。
 
    ```bash
-   gcloud services enable gmail.googleapis.com drive.googleapis.com docs.googleapis.com sheets.googleapis.com calendar-json.googleapis.com gmailmcp.googleapis.com drivemcp.googleapis.com docsmcp.googleapis.com sheetsmcp.googleapis.com calendarmcp.googleapis.com --project=PROJECT_ID
+   gcloud services enable gmail.googleapis.com drive.googleapis.com docs.googleapis.com sheets.googleapis.com slides.googleapis.com calendar-json.googleapis.com gmailmcp.googleapis.com drivemcp.googleapis.com docsmcp.googleapis.com sheetsmcp.googleapis.com slidesmcp.googleapis.com calendarmcp.googleapis.com --project=PROJECT_ID
    ```
 
    コンソールの「API とサービス → ライブラリ」から1つずつ有効にしても構いません。
@@ -101,7 +102,7 @@ Google 公式の Workspace MCP サーバーは **開発者プレビュー** で�
     "google-personal": {
       "command": "uvx",
       "args": ["workspace-mcp", "--single-user", "--tool-tier", "core", "--permissions",
-               "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly"],
+               "gmail:drafts", "calendar:full", "drive:readonly", "docs:readonly", "sheets:readonly", "slides:readonly"],
       "env": { "GOOGLE_OAUTH_CLIENT_ID": "...", "GOOGLE_OAUTH_CLIENT_SECRET": "...",
                "USER_GOOGLE_EMAIL": "you@gmail.com", "OAUTHLIB_INSECURE_TRANSPORT": "1" }
     }
