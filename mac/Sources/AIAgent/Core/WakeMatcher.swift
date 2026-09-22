@@ -128,8 +128,20 @@ struct WakeMatcher {
         let start = normText.distance(from: normText.startIndex, to: r.lowerBound)
         let end = start + word.count - 1
         let before = String(text[..<mapped.origin[start]])
+        var rest = Substring(text[text.index(after: mapped.originEnd[end])...])
+        // 名前のすぐ後に助詞が続くなら、呼びかけではなく話題として名前を使っている
+        //（「サスケのことを教えて」「サスケって何ができるの？」）。名前を消さずに全文を渡す
+        let particles = ["の", "は", "が", "を", "に", "と", "も", "って", "で", "へ", "や", "から", "より", "みたい", "らしい"]
+        if particles.contains(where: { rest.hasPrefix($0) }) {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // 「サスケさん、…」の敬称は、呼びかけの一部として一緒に取り除く
+        for honorific in ["さん", "くん", "君", "ちゃん", "様", "さま", "殿"] where rest.hasPrefix(honorific) {
+            rest = rest.dropFirst(honorific.count)
+            break
+        }
         // ウェイクワードの直後に続く長音や句読点（正規化で消える文字）は命令に含めない
-        let after = String(text[text.index(after: mapped.originEnd[end])...].drop { normalize(String($0)).isEmpty })
+        let after = String(rest.drop { normalize(String($0)).isEmpty })
         return (before + " " + after).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
     }
 }
