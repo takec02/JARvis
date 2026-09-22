@@ -31,8 +31,9 @@ enum Tools {
     /// AI に渡すツール（組み込み＋接続中の MCP サーバーのツール）
     /// - local: AI がローカル（Ollama）か。クラウドの AI にはローカル専用の MCP ツールを渡さない
     /// - tavily: Tavily の検索を含めるか（Claude は内蔵の Web 検索を使うので含めない）
-    static func specs(local: Bool, tavily: Bool = true) -> [ToolSpec] {
-        builtin.filter { tavily || $0.name != "search_web" } + MCPManager.shared.toolSpecs(includeLocalOnly: local)
+    /// - query: 渡すと、外部サービスのツールを質問に関係するものだけに絞る（ローカル AI は道具が多いと使わなくなるため）
+    static func specs(local: Bool, tavily: Bool = true, query: String? = nil) -> [ToolSpec] {
+        builtin.filter { tavily || $0.name != "search_web" } + MCPManager.shared.toolSpecs(includeLocalOnly: local, query: query)
     }
 
     /// 動作確認用：すべてのツール
@@ -74,6 +75,7 @@ enum Tools {
         if MCPManager.shared.handles(name) {
             return await MCPManager.shared.call(name, arguments: arguments, localAllowed: AppSettings.shared.backend == .local)
         }
+        if CommandLine.arguments.contains("--llm-selftest") { print("  [tool] \(name) \(arguments ?? "")") }
         do {
             let args = try validate(name: name, arguments: arguments)
             return (try await run(name: name, args: args), false)

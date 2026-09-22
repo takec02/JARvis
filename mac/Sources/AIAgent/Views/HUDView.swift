@@ -316,6 +316,13 @@ struct HUDView: View {
                 .foregroundStyle(tint)
                 .lineLimit(1)
                 .truncationMode(.head)
+        } else if let until = agent.conversationUntil, agent.state == .listening {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let left = max(0, Int(until.timeIntervalSince(ctx.date)))
+                Text("会話中 ─ 名前を呼ばずに話しかけられます（あと \(left / 60):\(String(format: "%02d", left % 60))）")
+                    .font(.system(size: 11))
+                    .foregroundStyle(tint.opacity(0.8))
+            }
         } else if agent.state == .idle {
             Text("「\(agent.settings.effectiveWakeWord)」と呼びかけてください")
                 .font(.system(size: 11))

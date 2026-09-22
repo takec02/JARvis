@@ -102,7 +102,7 @@ final class AppSettings {
         agentGender = AgentGender(rawValue: d.string(forKey: "agentGender") ?? "") ?? .male
         voiceIdentifier = d.string(forKey: "voiceIdentifier") ?? ""
         speechRate = d.object(forKey: "speechRate") as? Double ?? 0.52
-        followupSeconds = d.object(forKey: "followupSeconds") as? Double ?? 0
+        followupSeconds = d.object(forKey: "followupSeconds") as? Double ?? 600
         chime = d.object(forKey: "chime") as? Bool ?? true
     }
 

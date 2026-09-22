@@ -91,8 +91,8 @@ enum HTTP {
     }
 }
 
-@MainActor private func openAIStyleTools(local: Bool) -> [[String: Any]] {
-    Tools.specs(local: local).map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
+@MainActor private func openAIStyleTools(local: Bool, query: String? = nil) -> [[String: Any]] {
+    Tools.specs(local: local, query: query).map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]] }
 }
 
 // MARK: - Ollama (ローカル)
@@ -102,7 +102,10 @@ struct OllamaBackend: LLMBackend {
     var host = "http://localhost:11434"
 
     func respond(history: [ChatMessage], user: String, system: String) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { cont in
+        // 「それを要約して」のような続きの質問にも対応できるよう、直前の質問も話題の判断に含める
+        let lastUser = history.last { $0.role == "user" }?.content ?? ""
+        let topicQuery = user + " " + lastUser
+        return AsyncThrowingStream { cont in
             let task = Task { @MainActor in
                 do {
                     var messages: [[String: Any]] = [["role": "system", "content": system]]
@@ -110,7 +113,7 @@ struct OllamaBackend: LLMBackend {
                     messages.append(["role": "user", "content": user])
                     for _ in 0..<maxToolRounds {
                         let body: [String: Any] = [
-                            "model": model, "messages": messages, "tools": openAIStyleTools(local: true),
+                            "model": model, "messages": messages, "tools": openAIStyleTools(local: true, query: topicQuery),
                             "stream": true, "think": false, "keep_alive": "30m",
                         ]
                         let lines: AsyncLineSequence<URLSession.AsyncBytes>

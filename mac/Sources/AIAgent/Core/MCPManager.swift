@@ -40,11 +40,23 @@ enum SecretRef {
         return String(value[..<r.lowerBound]) + (Keychain.get(account) ?? "")
     }
 
-    /// 秘密の値をキーチェーンに保存し、設定ファイルに書く参照文字列を返す
+    /// 秘密の値をキーチェーンに保存し、設定ファイルに書く参照文字列を返す。
+    /// 空のときは、保存済みの値があればそれをそのまま使う（編集画面で秘密の欄を空にしておけば変更しない）
     static func store(_ value: String, account: String) -> String {
-        Keychain.set(value, for: account)
+        _ = storeOrKeep(value, account: account)
         return prefix + account
     }
+
+    static func storeOrKeep(_ value: String, account: String) -> String? {
+        if !value.isEmpty {
+            Keychain.set(value, for: account)
+            return prefix + account
+        }
+        if let saved = Keychain.get(account), !saved.isEmpty { return prefix + account }
+        return nil
+    }
+
+    static func has(_ account: String) -> Bool { !(Keychain.get(account) ?? "").isEmpty }
 }
 
 struct MCPConfigFile: Codable {
@@ -204,6 +216,67 @@ final class MCPManager {
         rebuildToolIndex()
     }
 
+    /// 「内容を Mac の外に出さない」の切り替え
+    func setLocalOnly(_ names: [String], _ on: Bool) async throws {
+        try await updateConfigFile { file in
+            for n in names where file.mcpServers[n] != nil { file.mcpServers[n]?.localOnly = on ? true : nil }
+        }
+    }
+
+    /// AI への指示に書く「今つながっているサービス」の説明
+    func connectedSummary(includeLocalOnly: Bool) -> String {
+        var names: [String] = []
+        for n in serverNames {
+            guard case .connected = status[n], includeLocalOnly || !isLocalOnly(n) else { continue }
+            let label: String
+            switch n {
+            case "google-personal": label = "Google（カレンダー・Gmail・Drive・ドキュメント・スプレッドシート・スライド）。ツール名は google-personal__ で始まる"
+            case "yuhitsu": label = "右筆（メール）。ツール名は yuhitsu__ で始まる"
+            default: label = "\(n)。ツール名は \(n)__ で始まる"
+            }
+            if !names.contains(label) { names.append(label) }
+        }
+        return names.map { "  - " + $0 }.joined(separator: "\n")
+    }
+
+    /// アプリが自動で入れる引数（個人の Google のツールは、登録した Gmail アドレス。予定の取得は件数を多めに）
+    private func autoArgs(for server: String, tool: String) -> [String: Value] {
+        guard server == "google-personal" else { return [:] }
+        var out: [String: Value] = [:]
+        if let email = configs[server]?.env?["USER_GOOGLE_EMAIL"], !email.isEmpty { out["user_google_email"] = .string(email) }
+        if tool == "get_events" { out["max_results"] = .int(50) }
+        return out
+    }
+
+    // MARK: 設定画面の表示用
+
+    func config(_ name: String) -> MCPServerConfig? { configs[name] }
+
+    /// 個人の Google（workspace-mcp）にログイン済みか（ログインすると認証情報のファイルができる）
+    var isGooglePersonalLoggedIn: Bool {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".google_workspace_mcp/credentials")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return files.contains { $0.hasSuffix(".json") && $0 != "oauth_states.json" }
+    }
+
+    /// 連携を外す。設定ファイルから消し、その連携用に保存したキーやログイン情報も消す
+    func removeServer(_ name: String) async throws {
+        let oauthName = configs[name]?.oauth
+        try await updateConfigFile { file in
+            file.mcpServers[name] = nil
+            if let oauthName, !file.mcpServers.values.contains(where: { $0.oauth == oauthName }) {
+                file.oauth?[oauthName] = nil
+            }
+        }
+        if let oauthName, !configs.values.contains(where: { $0.oauth == oauthName }) { OAuthManager.shared.logout(oauthName) }
+        let base = name.hasPrefix("google-work-") ? "google-work" : name
+        for suffix in ["secret", "token", "apikey", "password"] where SecretRef.has("mcp.\(base).\(suffix)") {
+            if base == "google-work", configs.keys.contains(where: { $0.hasPrefix("google-work-") }) { continue }
+            Keychain.set("", for: "mcp.\(base).\(suffix)")
+        }
+        status[name] = nil
+    }
+
     // MARK: Google の追加（設定画面から）
 
     struct GoogleService: Identifiable, Hashable {
@@ -256,7 +329,7 @@ final class MCPManager {
             var scopes: [String] = []
             for sc in chosen.flatMap(\.scopes) where !scopes.contains(sc) { scopes.append(sc) }
             oauth["google-work"] = OAuthConfig(clientId: clientId,
-                                               clientSecret: clientSecret.isEmpty ? nil : SecretRef.store(clientSecret, account: "mcp.google-work.secret"),
+                                               clientSecret: SecretRef.storeOrKeep(clientSecret, account: "mcp.google-work.secret"),
                                                scopes: scopes)
             file.oauth = oauth
         }
@@ -293,7 +366,7 @@ final class MCPManager {
     /// kintone（サイボウズ公式の MCP サーバー）。API トークンか、ログイン名とパスワードのどちらか
     func addKintone(baseURL: String, apiToken: String, username: String, password: String) async throws {
         var env = ["KINTONE_BASE_URL": baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))]
-        if !apiToken.isEmpty { env["KINTONE_API_TOKEN"] = SecretRef.store(apiToken, account: "mcp.kintone.token") }
+        if let ref = SecretRef.storeOrKeep(apiToken, account: "mcp.kintone.token") { env["KINTONE_API_TOKEN"] = ref }
         if !username.isEmpty {
             env["KINTONE_USERNAME"] = username
             env["KINTONE_PASSWORD"] = SecretRef.store(password, account: "mcp.kintone.password")
@@ -311,7 +384,7 @@ final class MCPManager {
             var oauth = file.oauth ?? [:]
             oauth["salesforce"] = OAuthConfig(
                 clientId: clientId,
-                clientSecret: clientSecret.isEmpty ? nil : SecretRef.store(clientSecret, account: "mcp.salesforce.secret"),
+                clientSecret: SecretRef.storeOrKeep(clientSecret, account: "mcp.salesforce.secret"),
                 scopes: ["mcp_api", "refresh_token"],
                 authorizeUrl: base + "/services/oauth2/authorize",
                 tokenUrl: base + "/services/oauth2/token")
@@ -334,8 +407,8 @@ final class MCPManager {
         }
         try await updateConfigFile { file in
             var headers: [String: String]?
-            if let bearerToken, !bearerToken.isEmpty {
-                headers = ["Authorization": "Bearer " + SecretRef.store(bearerToken, account: "mcp.\(name).token")]
+            if let bearerToken, let ref = SecretRef.storeOrKeep(bearerToken, account: "mcp.\(name).token") {
+                headers = ["Authorization": "Bearer " + ref]
             }
             file.mcpServers[name] = MCPServerConfig(url: url, headers: headers, localOnly: localOnly ? true : nil,
                                                     oauth: oauthConfig == nil ? nil : name)
@@ -514,13 +587,51 @@ final class MCPManager {
         return String(cleaned.prefix(64))
     }
 
-    /// AI に渡すツール定義（組み込みツールと同じ形式）。クラウドの AI にはローカル専用のサーバーのツールを見せない
-    func toolSpecs(includeLocalOnly: Bool) -> [ToolSpec] {
-        serverNames.flatMap { name -> [ToolSpec] in
+    /// 話題ごとの言葉と、それに当たるツール名・サーバー名の手がかり。
+    /// ローカル AI は道具が多すぎると使わなくなるので、質問に関係するものだけを渡すのに使う
+    private static let topics: [(words: [String], hints: [String])] = [
+        (["予定", "スケジュール", "カレンダー", "会議", "ミーティング", "打ち合わせ", "アポ", "空いて", "空き"], ["calendar", "event", "freebusy"]),
+        (["メール", "受信", "返信", "下書き", "gmail", "差出人", "未読"], ["gmail", "mail", "message", "draft", "yuhitsu"]),
+        (["ドライブ", "drive", "ファイル", "資料", "ドキュメント", "スプレッドシート", "シート", "スライド", "プレゼン", "表"], ["drive", "doc", "sheet", "presentation", "slide", "file"]),
+        (["notion", "ノーション", "ページ", "議事録", "データベース"], ["notion"]),
+        (["slack", "スラック", "チャンネル"], ["slack"]),
+        (["github", "ギットハブ", "issue", "イシュー", "プルリク", "リポジトリ", "pr"], ["github"]),
+        (["backlog", "バックログ", "課題", "チケット"], ["backlog"]),
+        (["kintone", "キントーン", "レコード"], ["kintone"]),
+        (["freee", "フリー", "請求", "会計", "経費", "入金", "仕訳", "給与"], ["freee"]),
+        (["商談", "取引", "顧客", "コンタクト", "リード", "hubspot", "ハブスポット", "salesforce", "セールスフォース"], ["hubspot", "salesforce"]),
+        (["zapier", "ザピアー"], ["zapier"]),
+        (["figma", "フィグマ", "デザイン", "フレーム"], ["figma"]),
+    ]
+
+    /// AI に渡すツール定義（組み込みツールと同じ形式）。クラウドの AI にはローカル専用のサーバーのツールを見せない。
+    /// query を渡すと、その話題に関係するツールだけに絞る（ローカル AI 向け）
+    func toolSpecs(includeLocalOnly: Bool, query: String? = nil) -> [ToolSpec] {
+        var hints: [String]?
+        if let query {
+            let q = query.lowercased()
+            hints = Self.topics.filter { $0.words.contains(where: q.contains) }.flatMap(\.hints)
+            // サーバー名がそのまま出てきたら、そのサーバーのツールを全部
+            hints! += serverNames.filter { q.contains($0.lowercased()) }
+        }
+        return serverNames.flatMap { name -> [ToolSpec] in
             guard let c = connections[name], includeLocalOnly || !isLocalOnly(name) else { return [] }
-            return c.tools.map { t in
+            let tools = c.tools.filter { t in
+                guard let hints else { return true }
+                let key = (name + " " + t.name).lowercased()
+                return hints.contains { key.contains($0) }
+            }
+            return tools.map { t in
                 var schema = Self.toAny(t.inputSchema) as? [String: Any] ?? [:]
                 schema.removeValue(forKey: "$schema")
+                // アプリが自動で入れる引数は、AI には見せない（AI が別の値を入れて失敗したり、件数を絞りすぎたりするのを防ぐ）
+                let hidden = Set(autoArgs(for: name, tool: t.name).keys)
+                if !hidden.isEmpty {
+                    var props = schema["properties"] as? [String: Any] ?? [:]
+                    hidden.forEach { props.removeValue(forKey: $0) }
+                    schema["properties"] = props
+                    if let req = schema["required"] as? [String] { schema["required"] = req.filter { !hidden.contains($0) } }
+                }
                 if schema["type"] == nil { schema["type"] = "object" }
                 if schema["properties"] == nil { schema["properties"] = [String: Any]() }
                 let desc = "[\(name)] " + (t.description ?? t.title ?? t.name)
@@ -554,6 +665,8 @@ final class MCPManager {
         } else if let d = arguments as? [String: Any] {
             args = d.mapValues(Self.toValue)
         }
+        for (k, v) in autoArgs(for: server, tool: tool) { args[k] = v }
+        if server == "google-personal", tool == "get_events" { Self.localizeDayRange(&args) }
         if let spec = c.tools.first(where: { $0.name == tool }), needsConfirmation(spec) {
             let ok = await AgentController.shared.confirm(describe(server: server, tool: spec, args: args))
             if !ok {
@@ -561,10 +674,12 @@ final class MCPManager {
             }
         }
         let finalArgs = args
-        Log.write("MCP call: \(server) / \(tool)")  // 引数や結果（メール本文など）は記録しない
+        Log.write("MCP call: \(server) / \(tool)")
+        if CommandLine.arguments.contains("--llm-selftest") { print("  [MCP] \(server) / \(tool) \(args)") }  // 引数や結果（メール本文など）は記録しない
         do {
             let result = try await withTimeout(seconds: 60) { try await c.client.callTool(name: tool, arguments: finalArgs) }
-            let text = result.content.map(Self.render).joined(separator: "\n")
+            var text = result.content.map(Self.render).joined(separator: "\n")
+            if tool == "get_events" { text = Self.simplifyEvents(text) }
             return (text.isEmpty ? "（結果なし）" : String(text.prefix(20000)), result.isError ?? false)
         } catch {
             // 接続が切れていたら、次回以降のためにつなぎ直しておく
@@ -574,6 +689,64 @@ final class MCPManager {
             Task { await connect(server) }
             return ("エラー: \(error.localizedDescription)", true)
         }
+    }
+
+    /// 「2026-09-24」のような日付だけの指定は世界標準時の0時（日本の9時）として扱われ、朝の予定が漏れる。
+    /// 日本時間のその日の0時〜翌日0時に直す
+    static func localizeDayRange(_ args: inout [String: Value]) {
+        let dateOnly = DateFormatter()
+        dateOnly.dateFormat = "yyyy-MM-dd"
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = .current
+        iso.formatOptions = [.withInternetDateTime]
+        // 日付だけ、または「0時ちょうど」（Z や時差なし）の指定は、その日の区切りを意味しているとみなす
+        func day(_ key: String) -> Date? {
+            guard case .string(let v) = args[key], v.count >= 10 else { return nil }
+            let rest = v.dropFirst(10)
+            guard rest.isEmpty || ["T00:00:00Z", "T00:00:00", "T00:00:00.000Z", "T00:00Z", "T00:00"].contains(String(rest)) else { return nil }
+            return dateOnly.date(from: String(v.prefix(10)))
+        }
+        if let start = day("time_min") {
+            args["time_min"] = .string(iso.string(from: start))
+            if args["time_max"] == nil, let next = Calendar.current.date(byAdding: .day, value: 1, to: start) {
+                args["time_max"] = .string(iso.string(from: next))
+            }
+        }
+        if case .string(let v) = args["time_max"], v.count == 10, let end = day("time_max"),
+           let next = Calendar.current.date(byAdding: .day, value: 1, to: end) {
+            args["time_max"] = .string(iso.string(from: next))  // 日付だけの「〜24日まで」は24日の終わりまで
+        } else if let end = day("time_max") {
+            args["time_max"] = .string(iso.string(from: end))  // 「25日0時まで」は日本時間の25日0時まで
+        }
+    }
+
+    /// カレンダーの結果（ID・リンク・英語の曜日などを含む長い形式）を、読み上げやすい短い日本語にする
+    static func simplifyEvents(_ text: String) -> String {
+        let pattern = #"- "(.*?)" \(Starts: (\S+) .*?Ends: (\S+)"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
+        let ns = text as NSString
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "ja_JP")
+        day.dateFormat = "M月d日(E)"
+        let hm = DateFormatter()
+        hm.dateFormat = "H:mm"
+        let iso = ISO8601DateFormatter()
+        let dateOnly = DateFormatter()
+        dateOnly.dateFormat = "yyyy-MM-dd"
+        var lines: [String] = []
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let title = ns.substring(with: m.range(at: 1))
+            let start = ns.substring(with: m.range(at: 2))
+            let end = ns.substring(with: m.range(at: 3))
+            if let s = iso.date(from: start) {
+                let e = iso.date(from: end)
+                lines.append("\(day.string(from: s)) \(hm.string(from: s))〜\(e.map { hm.string(from: $0) } ?? "") \(title)")
+            } else if let d = dateOnly.date(from: start) {
+                lines.append("\(day.string(from: d)) 終日 \(title)")
+            }
+        }
+        guard !lines.isEmpty else { return text }
+        return "予定は\(lines.count)件（時刻順）:\n" + lines.joined(separator: "\n")
     }
 
     private static func render(_ content: MCP.Tool.Content) -> String {

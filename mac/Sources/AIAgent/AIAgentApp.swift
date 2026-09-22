@@ -52,6 +52,8 @@ private struct MenuBarLabel: View {
         Image(systemName: agent.state.symbol)
             .task {
                 AppDelegate.openWindow = { openWindow(id: $0) }
+                // 動作確認用の起動では、画面・マイク・あいさつを始めない
+                if AppDelegate.isSelfTest { return }
                 let s = agent.settings
                 if !s.isNamed {
                     NSApp.setActivationPolicy(.regular)
@@ -68,6 +70,20 @@ private struct MenuBarLabel: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var openWindow: ((String) -> Void)?
+
+    static var isSelfTest: Bool {
+        CommandLine.arguments.contains { $0.hasSuffix("-selftest") }
+    }
+
+    /// 2つ目を起動しようとしたら、すでに動いている方を前に出して、こちらは終了する（常に1つだけ）
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard !Self.isSelfTest, let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        if let other = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: { $0.processIdentifier != me }) {
+            other.activate()
+            exit(0)
+        }
+    }
 
     // 動作確認用: `AIAgent --mcp-selftest [ツール名 JSON引数]` で MCP の接続とツール呼び出しを表示して終了する
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -115,6 +131,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         print("\(u)\n  error: \(error.localizedDescription)")
                     }
                 }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --llm-selftest "質問"` でローカル AI に1回質問し、ツールの呼び出しと答えを表示する
+        if let q = args.firstIndex(of: "--llm-selftest"), args.count > q + 1 {
+            Task { @MainActor in
+                await MCPManager.shared.reload()
+                print("tools: \(Tools.specs(local: true).count)")
+                let backend = try! makeBackend(.local, settings: AppSettings.shared)
+                var out = ""
+                do {
+                    for try await c in backend.respond(history: [], user: args[q + 1], system: AgentController.shared.debugSystemPrompt()) { out += c }
+                } catch { out = "error: \(error)" }
+                print("answer: \(out)")
                 exit(0)
             }
             return
