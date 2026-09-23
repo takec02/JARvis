@@ -432,22 +432,86 @@ final class MCPManager {
         return verbs.contains { n.contains($0) }
     }
 
-    /// 確認のために読み上げる説明（ツール名と、主な引数）
-    private func describe(server: String, tool: MCP.Tool, args: [String: Value]) -> String {
-        let label = server == "yuhitsu" ? "右筆" : server
-        let action = tool.annotations.title ?? tool.title ?? tool.name
-        let keys = ["summary", "title", "subject", "name", "content", "description", "record", "records", "body", "to", "app"]
-        let details = keys.compactMap { k -> String? in
-            guard let v = args[k] else { return nil }
-            let text: String
-            switch v {
-            case .string(let s): text = s
-            default: text = (try? String(data: JSONSerialization.data(withJSONObject: Self.toAny(v)), encoding: .utf8)) ?? ""
-            }
-            return text.isEmpty ? nil : String(text.prefix(60))
+    /// サービスの呼び名（設定ファイル上の名前は、人には分かりにくい）
+    private static let serviceLabels: [String: String] = [
+        "yuhitsu": "右筆（メール）", "google-personal": "Google", "notion": "Notion", "slack": "Slack",
+        "github": "GitHub", "freee": "freee", "hubspot": "HubSpot", "salesforce": "Salesforce",
+        "backlog": "Backlog", "kintone": "kintone", "zapier": "Zapier", "figma": "Figma",
+    ]
+
+    /// よくある操作を、日本語の言い方にする
+    private static func actionPhrase(server: String, tool: String, args: [String: Value]) -> String? {
+        func text(_ key: String) -> String? {
+            if case .string(let v)? = args[key], !v.isEmpty { return v }
+            return nil
         }
-        let detail = details.isEmpty ? "" : "内容は「\(details.prefix(2).joined(separator: "、"))」です。"
-        return "\(label)で\(action)を実行します。\(detail)よろしいですか？"
+        let action = text("action")?.lowercased() ?? ""
+        switch tool {
+        case "manage_event":
+            switch action {
+            case "delete": return "Google カレンダーの予定を削除します"
+            case "update": return "Google カレンダーの予定を変更します"
+            case "create": return "Google カレンダーに予定を追加します"
+            default: return "Google カレンダーの予定を操作します"
+            }
+        default: break
+        }
+        let t = tool.lowercased()
+        if t.contains("draft") { return "メールの下書きを作ります" }
+        if t.contains("send") || t.contains("post") { return "メッセージを送ります" }
+        if t.contains("delete") || t.contains("remove") || t.contains("trash") { return "削除します" }
+        if t.contains("create") || t.contains("add") || t.contains("insert") { return "新しく作ります" }
+        if t.contains("update") || t.contains("edit") || t.contains("modify") || t.contains("patch") { return "内容を変更します" }
+        return nil
+    }
+
+    /// 日時をそのまま読ませると分かりにくいので、「9月23日(水) 13時30分」の形にする
+    private static func friendlyTime(_ value: String) -> String? {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let isoNoSec = ISO8601DateFormatter()
+        isoNoSec.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = iso.date(from: value) ?? isoNoSec.date(from: value) else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ja_JP")
+        // ちょうどの時刻は「13時」、それ以外は「13時30分」と読みやすくする
+        f.dateFormat = Calendar.current.component(.minute, from: date) == 0 ? "M月d日(E) H時" : "M月d日(E) H時m分"
+        return f.string(from: date)
+    }
+
+    /// 確認のために読み上げる説明。何がどう変わるのかが分かる言い方にする
+    private func describe(server: String, tool: MCP.Tool, args: [String: Value]) -> String {
+        let label = Self.serviceLabels[server] ?? server
+        let phrase = Self.actionPhrase(server: server, tool: tool.name, args: args)
+            ?? "\(label)で「\(tool.annotations.title ?? tool.title ?? tool.name)」を実行します"
+        var lines: [String] = [phrase.hasPrefix("Google") || phrase.hasPrefix(label) ? phrase : "\(label)で\(phrase)"]
+
+        func string(_ key: String) -> String? {
+            if case .string(let v)? = args[key], !v.isEmpty { return v }
+            return nil
+        }
+        // 件名や本文など、内容が分かるもの
+        let titleKeys = ["summary", "title", "subject", "name", "query", "content", "body", "description", "text", "message"]
+        if let title = titleKeys.compactMap(string).first {
+            lines.append("内容: \(title.prefix(80))")
+        }
+        // 日時
+        if let start = string("start_time") {
+            let from = Self.friendlyTime(start) ?? start
+            if let end = string("end_time"), let to = Self.friendlyTime(end) {
+                // 同じ日なら、終わりの時刻だけを出す（9月23日(水) 13時30分 〜 16時35分）
+                let sameDay = to.prefix(while: { $0 != ")" }) == from.prefix(while: { $0 != ")" })
+                let endText = sameDay
+                    ? (to.split(separator: ")").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? to)
+                    : to
+                lines.append("日時: \(from) 〜 \(endText)")
+            } else {
+                lines.append("日時: \(from)")
+            }
+        }
+        if let to = string("to") { lines.append("宛先: \(to)") }
+        if let place = string("location") { lines.append("場所: \(place)") }
+        return lines.joined(separator: "\n") + "\nよろしいですか？"
     }
 
     // MARK: 接続

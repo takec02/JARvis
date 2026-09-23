@@ -3,7 +3,8 @@ import Speech
 
 /// マイクの音声を macOS 内蔵の音声認識 (SpeechAnalyzer) に流し続け、認識結果を通知する。
 final class SpeechListener: @unchecked Sendable {
-    typealias Handler = @MainActor (_ text: String, _ isFinal: Bool) -> Void
+    /// 認識結果。locale は、どの言語の認識器が出したか（通訳では話者の言語の判定に使う）
+    typealias Handler = @MainActor (_ text: String, _ isFinal: Bool, _ locale: Locale) -> Void
 
     private let engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
@@ -29,18 +30,21 @@ final class SpeechListener: @unchecked Sendable {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    func start(locale: Locale, contextWords: [String], onStatus: @escaping @MainActor (String) -> Void, onResult: @escaping Handler) async throws {
+    /// 複数の言語を同時に聞き取れる（通訳のときは日本語と相手の言語の2つ）
+    func start(locales: [Locale], contextWords: [String], onStatus: @escaping @MainActor (String) -> Void, onResult: @escaping Handler) async throws {
         // 途中経過は受け取りつつ、速さ優先 (fastResults) にはしない。確定結果の精度を優先するため
-        let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+        let transcribers = locales.map {
+            SpeechTranscriber(locale: $0, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
+        }
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: transcribers) {
             await onStatus("音声認識モデルをダウンロード中…")
             try await request.downloadAndInstall()
         }
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let analyzer = SpeechAnalyzer(modules: transcribers)
         self.analyzer = analyzer
         await setContext(contextWords)
 
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: transcribers) else {
             throw NSError(domain: "AIAgent", code: 1, userInfo: [NSLocalizedDescriptionKey: "音声認識の形式を取得できません"])
         }
         targetFormat = format
@@ -49,12 +53,18 @@ final class SpeechListener: @unchecked Sendable {
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         self.continuation = continuation
         resultsTask = Task {
-            do {
-                for try await result in transcriber.results {
-                    await onResult(String(result.text.characters), result.isFinal)
+            await withTaskGroup(of: Void.self) { group in
+                for (transcriber, locale) in zip(transcribers, locales) {
+                    group.addTask {
+                        do {
+                            for try await result in transcriber.results {
+                                await onResult(String(result.text.characters), result.isFinal, locale)
+                            }
+                        } catch {
+                            await onStatus("音声認識が停止しました: \(error.localizedDescription)")
+                        }
+                    }
                 }
-            } catch {
-                await onStatus("音声認識が停止しました: \(error.localizedDescription)")
             }
         }
         try await analyzer.start(inputSequence: stream)

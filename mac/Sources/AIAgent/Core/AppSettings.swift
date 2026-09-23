@@ -84,6 +84,13 @@ final class AppSettings {
     var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
     var backend: BackendKind { didSet { d.set(backend.rawValue, forKey: "backend") } }
     var ollamaModel: String { didSet { d.set(ollamaModel, forKey: "ollamaModel") } }
+    /// 通訳するときの相手の言語（音声認識の識別子。既定は英語）
+    var interpreterLanguage: String { didSet { d.set(interpreterLanguage, forKey: "interpreterLanguage") } }
+    /// 翻訳を AI にさせる（オフなら macOS 内蔵の翻訳。内蔵が使えないときは自動で AI になる）
+    var interpreterUseAI: Bool { didSet { d.set(interpreterUseAI, forKey: "interpreterUseAI") } }
+    /// 訳した言葉を読み上げる（オフなら画面に出すだけ）
+    var interpreterSpeak: Bool { didSet { d.set(interpreterSpeak, forKey: "interpreterSpeak") } }
+
     /// ユーザーが自由に書ける指示（毎回の指示文に入れる）
     var personalPrompt: String { didSet { d.set(personalPrompt, forKey: "personalPrompt") } }
 
@@ -126,6 +133,9 @@ final class AppSettings {
         ollamaModel = (savedModel == nil || savedModel == "qwen3:8b") ? "qwen3-vl:8b-instruct" : savedModel!
         ollamaContext = d.object(forKey: "ollamaContext") as? Int ?? 16384
         visionModel = d.string(forKey: "visionModel") ?? ""
+        interpreterLanguage = d.string(forKey: "interpreterLanguage") ?? "en-US"
+        interpreterUseAI = d.object(forKey: "interpreterUseAI") as? Bool ?? false
+        interpreterSpeak = d.object(forKey: "interpreterSpeak") as? Bool ?? true
         personalPrompt = d.string(forKey: "personalPrompt") ?? ""
         quietFromHour = d.object(forKey: "quietFromHour") as? Int ?? 22
         quietToHour = d.object(forKey: "quietToHour") as? Int ?? 7

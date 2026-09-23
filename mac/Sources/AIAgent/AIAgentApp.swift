@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import Translation
+import Speech
 import UserNotifications
 
 @main
@@ -151,6 +153,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("error: \(error)")
             }
             exit(0)
+        }
+        // 動作確認用: `AIAgent --subtitle-selftest` で、Mac の音声を英語で聞き取り、日本語字幕にできるか試す
+        if args.contains("--subtitle-selftest") {
+            Task { @MainActor in
+                do {
+                    try await Subtitles.shared.start(language: "en-US")
+                    let say = Process()
+                    say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+                    say.arguments = ["-v", "Samantha", "Good morning. Could you please send me the invoice by tomorrow afternoon?"]
+                    try say.run()
+                    say.waitUntilExit()
+                    try await Task.sleep(for: .seconds(25))
+                    for line in Subtitles.shared.lines {
+                        print("聞き取り: \(line.original)")
+                        print("     訳: \(line.translated.isEmpty ? "（未）" : line.translated)")
+                    }
+                    if Subtitles.shared.lines.isEmpty { print("（何も聞き取れませんでした）") }
+                    Subtitles.shared.stop()
+                } catch {
+                    print("error: \(error.localizedDescription)")
+                }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --translate-selftest` で、翻訳と話者の言語判定を試す
+        if args.contains("--translate-selftest") {
+            Task { @MainActor in
+                let useAI = args.contains("--ai")
+                print("訳す担当: \(useAI ? "AI" : "macOS 内蔵（無ければ AI）")")
+                for (text, from, to) in [("おはようございます。今日の会議は10時からです。", "ja", "en"),
+                                         ("Good morning. Could you send me the invoice today?", "en", "ja"),
+                                         ("¿Podemos hablar del proyecto mañana por la tarde?", "es", "ja"),
+                                         ("来週の火曜日に打ち合わせをお願いできますか。", "ja", "es")] {
+                    let started = Date()
+                    let result = await Interpreter.translate(text, from: from, to: to, useAI: useAI) ?? "（訳せませんでした）"
+                    print(String(format: "%@→%@ [%.1f秒] %@\n   → %@", from, to, Date().timeIntervalSince(started), text, result))
+                }
+                print("--- 話者の判定 ---")
+                for (ja, fo) in [("ハロー ハウ アー ユー", "Hello, how are you?"),
+                                 ("今日の予定を教えて", "Kyo no yotei"),
+                                 ("ブエノス ディアス", "Buenos días, ¿cómo estás?")] {
+                    let picked = Interpreter.pick(japanese: ja, foreign: fo)
+                    print("日本語側「\(ja)」/ 相手側「\(fo)」→ \(picked.map { ($0.isJapanese ? "日本語: " : "相手: ") + $0.text } ?? "なし")")
+                }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --langs-selftest` で、音声認識の対応言語と端末内翻訳の可否を表示する
+        if args.contains("--langs-selftest") {
+            Task { @MainActor in
+                let supported = await SpeechTranscriber.supportedLocales
+                let installed = await SpeechTranscriber.installedLocales
+                func show(_ title: String, _ locales: [Locale]) {
+                    let ids = locales.map { $0.identifier(.bcp47) }.sorted()
+                    print("\(title)（\(ids.count)件）: \(ids.joined(separator: ", "))")
+                }
+                show("音声認識に対応", supported)
+                show("すでに入っている", installed)
+                let availability = LanguageAvailability()
+                for (from, to) in [("ja", "en"), ("en", "ja"), ("ja", "es"), ("es", "ja")] {
+                    let status = await availability.status(from: Locale.Language(identifier: from), to: Locale.Language(identifier: to))
+                    let label: String
+                    switch status {
+                    case .installed: label = "すぐ使える"
+                    case .supported: label = "ダウンロードすれば使える"
+                    case .unsupported: label = "非対応"
+                    @unknown default: label = "不明"
+                    }
+                    print("端末内翻訳 \(from)→\(to): \(label)")
+                }
+                exit(0)
+            }
+            return
         }
         // 動作確認用: `AIAgent --notify-selftest` で、通知の許可状態を表示し、テスト通知を出す
         if args.contains("--notify-selftest") {

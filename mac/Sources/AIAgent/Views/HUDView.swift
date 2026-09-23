@@ -424,7 +424,7 @@ struct HUDView: View {
         @Bindable var s = agent.settings
         return HStack(spacing: 14) {
             HUDButton(symbol: agent.isPaused ? "mic.slash" : "mic", tint: tint, help: agent.isPaused ? "マイクを再開" : "マイクを一時停止") {
-                agent.togglePause()
+                agent.toggleMicrophone()
             }
             HUDButton(symbol: "keyboard", tint: tint, help: "文字で話しかける", active: showInput) {
                 withAnimation(.easeOut(duration: 0.2)) { showInput.toggle() }
@@ -449,6 +449,16 @@ struct HUDView: View {
             HUDButton(symbol: agent.meeting.isRecording ? "stop.circle.fill" : "record.circle", tint: agent.meeting.isRecording ? .red : tint,
                       help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
                 agent.toggleMeeting()
+            }
+            HUDButton(symbol: "captions.bubble", tint: tint,
+                      help: Subtitles.shared.running ? "字幕をやめる" : "会議・動画に日本語字幕を出す",
+                      active: Subtitles.shared.running) {
+                agent.toggleSubtitles()
+            }
+            HUDButton(symbol: "globe", tint: tint,
+                      help: agent.interpreting ? "通訳をやめる" : "通訳する（日本語 ⇄ \(Interpreter.label(for: agent.settings.interpreterLanguage))）",
+                      active: agent.interpreting) {
+                agent.toggleInterpreting()
             }
             HUDButton(symbol: "photo", tint: tint, help: "画像を渡して見てもらう") { pickImage() }
             HUDButton(symbol: "trash", tint: tint, help: "会話を消去して、呼びかけ待ちに戻る") { agent.clearConversation() }

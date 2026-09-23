@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import Translation
 
 struct SettingsView: View {
     var body: some View {
@@ -9,6 +10,7 @@ struct SettingsView: View {
             VoiceSettings().tabItem { Label("声", systemImage: "speaker.wave.2") }
             WatchSettings().tabItem { Label("お知らせ", systemImage: "bell") }
             MemorySettings().tabItem { Label("記憶", systemImage: "brain.head.profile") }
+            InterpreterSettings().tabItem { Label("通訳", systemImage: "globe") }
             IntegrationSettings().tabItem { Label("連携", systemImage: "point.3.connected.trianglepath.dotted") }
         }
         .frame(width: 520, height: 580)
@@ -484,5 +486,65 @@ private struct MemorySettings: View {
         } message: {
             Text("\(store.items.count)件が消えます。元に戻せません。")
         }
+    }
+}
+
+// MARK: 通訳
+
+private struct InterpreterSettings: View {
+    @Environment(AgentController.self) private var agent
+    @State private var builtInReady: Bool?
+    @State private var preparing = false
+    @State private var configuration: TranslationSession.Configuration?
+
+    var body: some View {
+        @Bindable var s = agent.settings
+        Form {
+            Section("通訳") {
+                Picker("相手の言語", selection: $s.interpreterLanguage) {
+                    ForEach(Interpreter.languages, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                .onChange(of: s.interpreterLanguage) { _, _ in check() }
+                Picker("訳す担当", selection: $s.interpreterUseAI) {
+                    Text("macOS 内蔵の翻訳（速い）").tag(false)
+                    Text("AI（文脈をふまえる。少し遅い）").tag(true)
+                }
+                Toggle("訳した言葉を読み上げる", isOn: $s.interpreterSpeak)
+                Text("画面下の地球のボタンで始めます。通訳の間は呼びかけに反応せず、聞こえた言葉を日本語と\(Interpreter.label(for: s.interpreterLanguage))の間で訳します。どちらも Mac の中で処理され、外には出ません（AI をクラウドにしている場合を除く）。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("内蔵翻訳の準備") {
+                switch builtInReady {
+                case true: Label("この言語の翻訳データは入っています", systemImage: "checkmark.circle")
+                case false:
+                    Label("まだ入っていません。入れると速くなります（入れるまでは AI が訳します）", systemImage: "arrow.down.circle")
+                    Button(preparing ? "準備中…" : "翻訳データを入れる") {
+                        preparing = true
+                        configuration = TranslationSession.Configuration(
+                            source: Locale.Language(identifier: "ja"),
+                            target: Locale.Language(identifier: Interpreter.languageCode(s.interpreterLanguage)))
+                    }
+                    .disabled(preparing)
+                default: ProgressView().controlSize(.small)
+                }
+                Text("音声を聞き取るためのデータは、通訳を最初に始めたときに自動で入ります（数十MB）。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .textFieldStyle(.roundedBorder)
+        .task { check() }
+        .translationTask(configuration) { session in
+            // 翻訳データが無ければ、ここで macOS がダウンロードの確認を出す
+            try? await session.prepareTranslation()
+            preparing = false
+            check()
+        }
+    }
+
+    private func check() {
+        builtInReady = nil
+        let language = agent.settings.interpreterLanguage
+        Task { builtInReady = await Interpreter.builtInReady(language) }
     }
 }

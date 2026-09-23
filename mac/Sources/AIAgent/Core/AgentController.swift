@@ -60,6 +60,13 @@ final class AgentController {
     private(set) var pendingConfirmation: String?
     private var confirmContinuation: CheckedContinuation<Bool, Never>?
 
+    /// 通訳モード（オンの間は、呼びかけに反応せず、聞こえた言葉を訳す）
+    private(set) var interpreting = false
+    /// 通訳で待っている、もう一方の言語の認識結果（両方そろってから、どちらが本物か決める）
+    private var pendingJapanese: String?
+    private var pendingForeign: String?
+    private var interpretTask: Task<Void, Never>?
+
     /// 会議の記録（画面の REC 表示にも使う）
     let meeting = MeetingRecorder()
 
@@ -99,30 +106,51 @@ final class AgentController {
                     self.level = v > self.level ? v : self.level * 0.8 + v * 0.2
                 }
             }
-            do {
-                try await listener.start(
-                    locale: Locale(identifier: "ja-JP"),
-                    contextWords: settings.wakeWords,
-                    onStatus: { [weak self] msg in self?.state = .error(msg) },
-                    onResult: { [weak self] text, isFinal in self?.onTranscript(text, isFinal: isFinal) }
-                )
-                Log.write("listening started. wake words: \(settings.wakeWords)")
-                Notifier.requestPermission()
-                watcher.start()
-                state = .idle
-                await speakAndWait("\(settings.agentName)、起動しました。")
-                setIdle()
-            } catch {
-                Log.write("listener start failed: \(error)")
-                state = .error("音声認識を開始できません: \(error.localizedDescription)")
-                started = false
+            // 入れ直しや再起動の直後は、前のプロセスがマイクを手放すまで数秒かかることがある
+            var lastError: Error?
+            for attempt in 1...5 {
+                do {
+                    try await listener.start(
+                        locales: listeningLocales,
+                        contextWords: settings.wakeWords,
+                        onStatus: { [weak self] msg in self?.state = .error(msg) },
+                        onResult: { [weak self] text, isFinal, locale in self?.onTranscript(text, isFinal: isFinal, locale: locale) }
+                    )
+                    lastError = nil
+                    break
+                } catch {
+                    lastError = error
+                    Log.write("listener start failed (\(attempt)回目): \(error)")
+                    state = .error("マイクを準備しています…（\(attempt)回目）")
+                    try? await Task.sleep(for: .seconds(2))
+                }
             }
+            if let lastError {
+                state = .error("マイクを使えません。ほかのアプリがマイクを使っていないか確かめて、マイクのボタンを押すとやり直します（\(lastError.localizedDescription)）")
+                started = false
+                return
+            }
+            Log.write("listening started. wake words: \(settings.wakeWords)")
+            Notifier.requestPermission()
+            watcher.start()
+            state = .idle
+            await speakAndWait("\(settings.agentName)、起動しました。")
+            setIdle()
         }
     }
 
     /// 名前や別表記が変わったとき、認識のヒントを更新する
     func wakeWordsChanged() {
         Task { await listener.setContext(settings.wakeWords) }
+    }
+
+    /// マイクのボタン。エラーで止まっているときは、もう一度始める
+    func toggleMicrophone() {
+        if case .error = state, !started {
+            startIfReady()
+            return
+        }
+        togglePause()
     }
 
     func togglePause() {
@@ -203,12 +231,123 @@ final class AgentController {
 
     // MARK: 音声認識の結果
 
-    private func onTranscript(_ text: String, isFinal: Bool) {
+    /// 今聞き取る言語（通訳のときは日本語＋相手の言語）
+    private var listeningLocales: [Locale] {
+        interpreting ? [Locale(identifier: "ja-JP"), Locale(identifier: settings.interpreterLanguage)] : [Locale(identifier: "ja-JP")]
+    }
+
+    // MARK: 字幕（会議・動画）
+
+    /// Mac の音声を聞き取って日本語字幕を出す／やめる
+    func toggleSubtitles() {
+        if Subtitles.shared.running {
+            Subtitles.shared.stop()
+            entries.append(ConversationEntry(role: "system", text: "字幕を終わります"))
+            return
+        }
+        let language = Interpreter.label(for: settings.interpreterLanguage)
+        entries.append(ConversationEntry(role: "system", text: "字幕を始めます（\(language) → 日本語）。画面の下に出ます"))
+        Task {
+            do {
+                try await Subtitles.shared.start(language: settings.interpreterLanguage)
+            } catch {
+                entries.append(ConversationEntry(role: "system", text: error.localizedDescription))
+                Log.write("subtitles failed: \(error)")
+            }
+        }
+    }
+
+    // MARK: 通訳
+
+    /// 通訳モードを切り替える。聞き取る言語が変わるので、音声認識を始め直す
+    func toggleInterpreting() {
+        interpreting.toggle()
+        Log.write("interpreting: \(interpreting)")
+        pendingJapanese = nil
+        pendingForeign = nil
+        interpretTask?.cancel()
+        let language = Interpreter.label(for: settings.interpreterLanguage)
+        entries.append(ConversationEntry(role: "system",
+                                         text: interpreting ? "通訳を始めます（日本語 ⇄ \(language)）" : "通訳を終わります"))
+        Task {
+            await listener.stop()
+            do {
+                try await listener.start(
+                    locales: listeningLocales,
+                    contextWords: settings.wakeWords,
+                    onStatus: { [weak self] msg in self?.state = .error(msg) },
+                    onResult: { [weak self] text, isFinal, locale in self?.onTranscript(text, isFinal: isFinal, locale: locale) }
+                )
+                listener.muted = false
+                state = interpreting ? .listening : .idle
+                if interpreting, !settings.interpreterUseAI, await !Interpreter.builtInReady(settings.interpreterLanguage) {
+                    entries.append(ConversationEntry(role: "system",
+                                                     text: "内蔵の翻訳データがまだ入っていないため、AI が訳します（設定 → 通訳 で内蔵翻訳を用意できます）"))
+                }
+            } catch {
+                Log.write("interpreter listener failed: \(error)")
+                state = .error("通訳を始められません: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// 聞こえた言葉を訳して、画面に出す（設定によっては読み上げる）
+    private func handleInterpretation(_ text: String, isJapanese: Bool) {
+        let foreign = settings.interpreterLanguage
+        let from = isJapanese ? "ja" : Interpreter.languageCode(foreign)
+        let to = isJapanese ? Interpreter.languageCode(foreign) : "ja"
+        let speakerLabel = isJapanese ? "あなた" : Interpreter.label(for: foreign)
+        let entry = ConversationEntry(role: isJapanese ? "user" : "assistant", text: "\(speakerLabel): \(text)\n訳しています…")
+        entries.append(entry)
+        Task {
+            guard let translated = await Interpreter.translate(text, from: from, to: to, useAI: settings.interpreterUseAI) else {
+                updateEntry(entry.id, text: "\(speakerLabel): \(text)\n（訳せませんでした）")
+                return
+            }
+            updateEntry(entry.id, text: "\(speakerLabel): \(text)\n→ \(translated)")
+            guard settings.interpreterSpeak, !userPaused else { return }
+            speaker.voiceIdentifier = isJapanese ? (Interpreter.voice(for: foreign)?.identifier ?? "") : settings.voiceIdentifier
+            speaker.gender = settings.agentGender
+            speaker.rate = Float(settings.speechRate)
+            listener.muted = true
+            state = .speaking
+            speaker.say(translated)
+            await speaker.waitUntilIdle()
+            listener.muted = false
+            state = interpreting ? .listening : .idle
+        }
+    }
+
+    private func onTranscript(_ text: String, isFinal: Bool, locale: Locale = Locale(identifier: "ja-JP")) {
         // 聞き取った内容は周囲の会話も含むため、明示的に有効にしたとき（調査用）だけ記録する
         if isFinal, UserDefaults.standard.bool(forKey: "debugTranscripts") { Log.write("heard [\(state.label)] \(text)") }
         guard state == .idle || state == .listening else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // 通訳中は、聞こえた言葉をそのまま訳す（呼びかけには反応しない）
+        if interpreting {
+            guard isFinal else {
+                liveText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return
+            }
+            let isJapaneseSide = locale.identifier.hasPrefix("ja")
+            if isJapaneseSide { pendingJapanese = text } else { pendingForeign = text }
+            // もう一方の認識器の結果を少しだけ待ってから、どちらが本物かを決める
+            interpretTask?.cancel()
+            interpretTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled, let self else { return }
+                let ja = self.pendingJapanese
+                let fo = self.pendingForeign
+                self.pendingJapanese = nil
+                self.pendingForeign = nil
+                self.liveText = ""
+                guard let picked = Interpreter.pick(japanese: ja, foreign: fo), picked.text.count >= 2 else { return }
+                self.handleInterpretation(picked.text, isJapanese: picked.isJapanese)
+            }
+            return
+        }
+
         // 書き込みの確認中は、返事（はい／いいえ）だけを受け付ける
         if confirmContinuation != nil {
             if isFinal { answerConfirmation(text: trimmed) }
@@ -615,6 +754,17 @@ final class AgentController {
         let short = text.count < 15
         if short, ["ありがとう", "おやすみ", "スタンバイ", "もういい", "以上", "終わり"].contains(where: { text.hasPrefix($0) }) {
             return ("承知しました。いつでもお呼びください。", false)
+        }
+        // 通訳・字幕は声でも始められる
+        if short, text.contains("通訳") {
+            let stop = ["やめ", "終わ", "止め", "オフ"].contains(where: text.contains)
+            if interpreting != !stop { toggleInterpreting() }
+            return (stop ? "通訳を終わります。" : "通訳を始めます。話しかけてください。", false)
+        }
+        if short, text.contains("字幕") {
+            let stop = ["やめ", "終わ", "消して", "止め", "オフ"].contains(where: text.contains)
+            if Subtitles.shared.running != !stop { toggleSubtitles() }
+            return (stop ? "字幕を終わります。" : "字幕を出します。", true)
         }
         if ["会話", "履歴", "記憶"].contains(where: text.contains), ["リセット", "消して", "忘れて"].contains(where: text.contains) {
             history.removeAll()

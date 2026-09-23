@@ -23,7 +23,9 @@ final class SystemAudioTranscriber: @unchecked Sendable {
     private var targetFormat: AVAudioFormat?
     private let queue = DispatchQueue(label: "AIAgent.systemAudio")
 
-    func start(onFinal: @escaping @MainActor (String) -> Void) async throws {
+    /// locale は聞き取る言語。会議の記録は日本語、字幕では相手の言語を指定する
+    func start(locale: Locale = Locale(identifier: "ja-JP"), assetStatus: (@MainActor (String) -> Void)? = nil,
+               onFinal: @escaping @MainActor (String) -> Void) async throws {
         // 1) 自分のプロセスを除いた、Mac 全体の音声のタップを作る
         var pid = getpid()
         var own = AudioObjectID(kAudioObjectUnknown)
@@ -70,7 +72,11 @@ final class SystemAudioTranscriber: @unchecked Sendable {
         }
 
         // 3) 音声認識（確定した文だけを受け取る）
-        let transcriber = SpeechTranscriber(locale: Locale(identifier: "ja-JP"), transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
+        let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+            await assetStatus?("音声認識モデルをダウンロード中…")
+            try await request.downloadAndInstall()
+        }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         guard let target = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
