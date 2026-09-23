@@ -444,6 +444,12 @@ final class AgentController {
 
     /// 書き込み系のツールを実行する前に、声（または画面のボタン）で確認する。60秒答えがなければ中止
     func confirm(_ question: String) async -> Bool {
+        // 動作確認用の起動（--llm-selftest など）では答える人がいないので、自動で実行する
+        if AppDelegate.isSelfTest {
+            Log.write("confirm(自動承認): \(question.prefix(80))")
+            lastConfirmDeclined = false
+            return true
+        }
         guard confirmContinuation == nil else { return false }
         await speaker.waitUntilIdle()
         entries.append(ConversationEntry(role: "system", text: "確認: \(question)"))

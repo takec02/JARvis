@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 @main
 struct AIAgentApp: App {
@@ -150,6 +151,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("error: \(error)")
             }
             exit(0)
+        }
+        // 動作確認用: `AIAgent --notify-selftest` で、通知の許可状態を表示し、テスト通知を出す
+        if args.contains("--notify-selftest") {
+            Task { @MainActor in
+                let center = UNUserNotificationCenter.current()
+                do {
+                    let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                    Log.write("notify-selftest: 許可を求めた結果 \(granted)")
+                } catch {
+                    Log.write("notify-selftest: エラー \(error.localizedDescription)")
+                }
+                let settings = await center.notificationSettings()
+                Log.write("notify-selftest: 状態 \(settings.authorizationStatus.rawValue)（0=未決定 1=拒否 2=許可 3=暫定）")
+                Notifier.show(title: "AIエージェント", body: "通知のテストです")
+                try? await Task.sleep(for: .seconds(2))
+                exit(0)
+            }
+            return
         }
         // 動作確認用: `AIAgent --tools-selftest` で、組み込みの機能が動くかを1つずつ試して表示し、終了する
         if args.contains("--tools-selftest") {

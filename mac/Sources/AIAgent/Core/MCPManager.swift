@@ -740,9 +740,9 @@ final class MCPManager {
 
     /// カレンダーの結果（ID・リンク・英語の曜日などを含む長い形式）を、読み上げやすい短い日本語にする
     static func simplifyEvents(_ text: String) -> String {
-        let pattern = #"- "(.*?)" \(Starts: (\S+) .*?Ends: (\S+)"#
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
-        let ns = text as NSString
+        // 予定を消したり直したりするには ID が要るので、短くしても ID は残す
+        guard let re = try? NSRegularExpression(pattern: #"- "(.*?)" \(Starts: (\S+) .*?Ends: (\S+)"#),
+              let idRe = try? NSRegularExpression(pattern: #"ID: (\S+)"#) else { return text }
         let day = DateFormatter()
         day.locale = Locale(identifier: "ja_JP")
         day.dateFormat = "M月d日(E)"
@@ -752,19 +752,26 @@ final class MCPManager {
         let dateOnly = DateFormatter()
         dateOnly.dateFormat = "yyyy-MM-dd"
         var lines: [String] = []
-        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+        for line in text.components(separatedBy: .newlines) {
+            let ns = line as NSString
+            let whole = NSRange(location: 0, length: ns.length)
+            guard let m = re.firstMatch(in: line, range: whole) else { continue }
             let title = ns.substring(with: m.range(at: 1))
             let start = ns.substring(with: m.range(at: 2))
             let end = ns.substring(with: m.range(at: 3))
+            var id = ""
+            if let idMatch = idRe.firstMatch(in: line, range: whole) {
+                id = " [ID: \(ns.substring(with: idMatch.range(at: 1)))]"
+            }
             if let s = iso.date(from: start) {
                 let e = iso.date(from: end)
-                lines.append("\(day.string(from: s)) \(hm.string(from: s))〜\(e.map { hm.string(from: $0) } ?? "") \(title)")
+                lines.append("\(day.string(from: s)) \(hm.string(from: s))〜\(e.map { hm.string(from: $0) } ?? "") \(title)\(id)")
             } else if let d = dateOnly.date(from: start) {
-                lines.append("\(day.string(from: d)) 終日 \(title)")
+                lines.append("\(day.string(from: d)) 終日 \(title)\(id)")
             }
         }
         guard !lines.isEmpty else { return text }
-        return "予定は\(lines.count)件（時刻順）:\n" + lines.joined(separator: "\n")
+        return "予定は\(lines.count)件（時刻順）。ID は予定を消す・直すときだけ使い、読み上げには出さない:\n" + lines.joined(separator: "\n")
     }
 
     private static func render(_ content: MCP.Tool.Content) -> String {

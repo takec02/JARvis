@@ -233,6 +233,10 @@ launchd から起動したプロセスにはマイクの許可ダイアログが
 | [気象庁](https://www.jma.go.jp/) | 天気予報 | [政府標準利用規約](https://www.jma.go.jp/jma/kishou/info/coment.html)に基づき出典を明記して利用 |
 | [Tavily](https://tavily.com) | Web 検索 | 利用者自身の API キーで利用 |
 
+## 作者
+
+[takec02.com](https://takec02.com/) — 作者のサイト。ほかに公開しているアプリもこちらにあります。
+
 ## ライセンス
 
 MIT（このリポジトリのコード）。
