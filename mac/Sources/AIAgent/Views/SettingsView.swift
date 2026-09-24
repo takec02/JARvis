@@ -11,6 +11,7 @@ struct SettingsView: View {
             WatchSettings().tabItem { Label("お知らせ", systemImage: "bell") }
             MemorySettings().tabItem { Label("記憶", systemImage: "brain.head.profile") }
             InterpreterSettings().tabItem { Label("通訳", systemImage: "globe") }
+            CalendarSettings().tabItem { Label("予定・提出物", systemImage: "calendar") }
             IntegrationSettings().tabItem { Label("連携", systemImage: "point.3.connected.trianglepath.dotted") }
         }
         .frame(width: 520, height: 580)
@@ -349,14 +350,16 @@ private struct WatchSettings: View {
 }
 
 private struct WatchRuleSheet: View {
+    enum Timing: Hashable { case daily, monthly, interval }
+
     @State var rule: WatchRule
     let onSave: (WatchRule) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var repeats: Bool
+    @State private var timing: Timing
 
     init(rule: WatchRule, onSave: @escaping (WatchRule) -> Void) {
         _rule = State(initialValue: rule)
-        _repeats = State(initialValue: rule.everyMinutes != nil)
+        _timing = State(initialValue: rule.everyMinutes != nil ? .interval : (rule.dayOfMonth != nil ? .monthly : .daily))
         self.onSave = onSave
     }
 
@@ -365,12 +368,19 @@ private struct WatchRuleSheet: View {
             Text("見張りの設定").font(.headline)
             Form {
                 TextField("名前", text: $rule.name, prompt: Text("例: 朝の読み上げ"))
-                Picker("いつ", selection: $repeats) {
-                    Text("毎日 決まった時刻").tag(false)
-                    Text("一定の間隔ごと").tag(true)
+                Picker("いつ", selection: $timing) {
+                    Text("毎日 決まった時刻").tag(Timing.daily)
+                    Text("毎月 決まった日").tag(Timing.monthly)
+                    Text("一定の間隔ごと").tag(Timing.interval)
                 }
                 .pickerStyle(.radioGroup)
-                if repeats {
+                if timing == .monthly {
+                    Picker("日", selection: Binding(get: { rule.dayOfMonth ?? 25 }, set: { rule.dayOfMonth = $0 })) {
+                        ForEach(1..<29) { Text("\($0)日").tag($0) }
+                        Text("月末").tag(31)
+                    }
+                }
+                if timing == .interval {
                     Picker("間隔", selection: Binding(get: { rule.everyMinutes ?? 30 }, set: { rule.everyMinutes = $0 })) {
                         ForEach([5, 10, 15, 30, 60, 120, 180, 360], id: \.self) {
                             Text($0 % 60 == 0 && $0 >= 60 ? "\($0 / 60)時間ごと" : "\($0)分ごと").tag($0)
@@ -400,7 +410,17 @@ private struct WatchRuleSheet: View {
                 Spacer()
                 Button("やめる") { dismiss() }
                 Button("保存") {
-                    if !repeats { rule.everyMinutes = nil } else if rule.everyMinutes == nil { rule.everyMinutes = 30 }
+                    switch timing {
+                    case .daily:
+                        rule.everyMinutes = nil
+                        rule.dayOfMonth = nil
+                    case .monthly:
+                        rule.everyMinutes = nil
+                        if rule.dayOfMonth == nil { rule.dayOfMonth = 25 }
+                    case .interval:
+                        rule.dayOfMonth = nil
+                        if rule.everyMinutes == nil { rule.everyMinutes = 30 }
+                    }
                     onSave(rule)
                     dismiss()
                 }
@@ -546,5 +566,67 @@ private struct InterpreterSettings: View {
         builtInReady = nil
         let language = agent.settings.interpreterLanguage
         Task { builtInReady = await Interpreter.builtInReady(language) }
+    }
+}
+
+// MARK: 予定（重なりの確認）
+
+private struct CalendarSettings: View {
+    @Environment(AgentController.self) private var agent
+    @State private var calendars: [(id: String, name: String)] = []
+    @State private var loading = true
+
+    var body: some View {
+        @Bindable var s = agent.settings
+        Form {
+            Section("予定を入れる前に、重なりを確かめるカレンダー") {
+                if loading {
+                    HStack { ProgressView().controlSize(.small); Text("カレンダーを読み込んでいます…") }
+                } else if calendars.isEmpty {
+                    Text("カレンダーを取得できませんでした。設定 → 連携 で Google がつながっているか確かめてください。")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(calendars, id: \.id) { calendar in
+                        Toggle(calendar.name, isOn: binding(for: calendar.id))
+                    }
+                }
+                Text("選んだカレンダーに予定が入っている時間に、新しい予定を入れようとすると、「〇〇が入っていますが、よろしいですか？」と確認します。終日の予定（祝日など）は数えません。何も選ばないときは、主カレンダーだけを見ます。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("提出物の確認（勤務表など）") {
+                TextField("提出物を集めるフォルダ", text: $s.submissionParentFolder,
+                          prompt: Text("Google ドライブのフォルダの URL を貼り付け"))
+                TextField("名簿のスプレッドシート", text: $s.rosterSheet,
+                          prompt: Text("スプレッドシートの URL を貼り付け"))
+                TextField("名前が並ぶ範囲", text: $s.rosterRange, prompt: Text("例: シート1!A2:A"))
+                Text("「未提出は誰？」と聞くと、フォルダの中のフォルダ名（またはファイル名）と名簿を突き合わせ、出していない人を挙げます。月ごとのフォルダは「10月のフォルダを作って」と頼めば作れます。締切前の自動確認は、設定 → お知らせ の「提出物の締切前の確認」をオンにしてください。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .task {
+            calendars = await MCPManager.shared.googleCalendars()
+            // 主カレンダーは一覧に出ないことがあるので、先頭に足しておく
+            if !calendars.contains(where: { $0.id == "primary" }) {
+                calendars.insert((id: "primary", name: "自分のカレンダー（主）"), at: 0)
+            }
+            loading = false
+        }
+    }
+
+    private func binding(for id: String) -> Binding<Bool> {
+        let s = agent.settings
+        return Binding(
+            get: { s.conflictCalendarList.contains(id) },
+            set: { on in
+                var list = AppSettings.words(s.conflictCalendars)
+                if list.isEmpty { list = ["primary"] }
+                if on {
+                    if !list.contains(id) { list.append(id) }
+                } else {
+                    list.removeAll { $0 == id }
+                }
+                s.conflictCalendars = list.joined(separator: ", ")
+            })
     }
 }

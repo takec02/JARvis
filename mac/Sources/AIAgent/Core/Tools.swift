@@ -74,6 +74,9 @@ enum Tools {
         ToolSpec(name: "look_camera",
                  description: "Mac のカメラで今見えているものを1枚撮って見る。「これ何？」「これ読んで」「この名刺を登録して」「QR コード読んで」など、ユーザーがカメラに何かを見せているときに使う。写っている文字と QR コード・バーコードの中身を返す",
                  properties: [:]),
+        ToolSpec(name: "check_submissions",
+                 description: "Google ドライブのフォルダの中身と名簿を突き合わせ、まだ出していない人（案件）を調べる。folder はフォルダの URL か ID（省略すると設定の親フォルダの中の今月のフォルダ）。「未提出は誰？」「勤務表そろってる？」と聞かれたら使う",
+                 properties: ["folder": ["type": "string"]]),
         ToolSpec(name: "look_image", description: "ユーザーが渡した画像（ドラッグや「画像を渡す」で添付されたもの）を見る。添付があると伝えられたら、これを呼んでから答える",
                  properties: [:]),
         ToolSpec(name: "open_url", description: "Web ページ（http/https の URL）をブラウザで開く。QR コードの URL を開くときなど。開く前にユーザーに確認する",
@@ -208,6 +211,12 @@ enum Tools {
             let text = out.joined(separator: "\n")
             Camera.shared.note(reading: text)
             return text
+        case "check_submissions":
+            let folder = (args["folder"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let settings = AppSettings.shared
+            let target = folder.isEmpty ? settings.submissionParentFolder : folder
+            guard !target.isEmpty else { throw ToolError(message: "調べるフォルダが決まっていません（設定 → 予定 で親フォルダを登録してください）") }
+            return try await Submissions.check(folder: target, sheet: settings.rosterSheet, range: settings.rosterRange)
         case "look_image":
             guard Camera.shared.lastPhoto != nil else { return "渡された画像がありません" }
             Camera.shared.attachmentUsed()
@@ -282,6 +291,7 @@ extension Tools {
                 lines.append("❌ \(label): \(String(describing: error).replacingOccurrences(of: "\n", with: " ").prefix(160))")
             }
         }
+        lines.append("重なりを調べるカレンダー: \(AppSettings.shared.conflictCalendarList)")
         lines.append("ホーム: \(FileManager.default.homeDirectoryForCurrentUser.path)")
         await check("アプリを開く（open -a Finder）") { try await shell("/usr/bin/open", ["-a", "Finder"]) }
         await check("電池（pmset）") { try await shell("/usr/bin/pmset", ["-g", "batt"]) }

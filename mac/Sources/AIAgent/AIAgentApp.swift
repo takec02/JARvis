@@ -202,6 +202,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // 動作確認用: `AIAgent --submissions-selftest <フォルダURL> <シートURL> <範囲>` で、未提出の判定を試す
+        if let i = args.firstIndex(of: "--submissions-selftest"), args.count > i + 3 {
+            Task { @MainActor in
+                await MCPManager.shared.reload()
+                do {
+                    print(try await Submissions.check(folder: args[i + 1], sheet: args[i + 2], range: args[i + 3]))
+                } catch {
+                    print("error: \(error.localizedDescription)")
+                }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: 名前の突き合わせだけを試す（ドライブに触れない）
+        if args.contains("--match-selftest") {
+            let roster = ["山田 太郎", "鈴木花子", "ＡＢＣ商事", "佐藤"]
+            let found = ["山田太郎_2026-10", "ABC商事", "田中一郎"]
+            let r = Submissions.compare(roster: roster, found: found)
+            print("提出済み: \(r.submitted)")
+            print("未提出: \(r.missing)")
+            print("名簿にない物: \(r.extra)")
+            exit(0)
+        }
         // 動作確認用: `AIAgent --langs-selftest` で、音声認識の対応言語と端末内翻訳の可否を表示する
         if args.contains("--langs-selftest") {
             Task { @MainActor in

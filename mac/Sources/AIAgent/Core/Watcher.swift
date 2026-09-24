@@ -8,10 +8,12 @@ struct WatchRule: Codable, Identifiable, Equatable {
     var id = UUID()
     var name = ""
     var enabled = false
-    /// 分ごとに繰り返す（nil なら毎日 hour:minute に1回）
+    /// 分ごとに繰り返す（nil なら決まった時刻に1回）
     var everyMinutes: Int?
     var hour = 8
     var minute = 0
+    /// 毎月この日に実行する（nil なら毎日）
+    var dayOfMonth: Int?
     /// AI にやってもらうこと
     var prompt = ""
     var speak = true
@@ -22,6 +24,7 @@ struct WatchRule: Codable, Identifiable, Equatable {
         if let m = everyMinutes {
             return m % 60 == 0 && m >= 60 ? "\(m / 60)時間ごと" : "\(m)分ごと"
         }
+        if let day = dayOfMonth { return String(format: "毎月%d日 %d:%02d", day, hour, minute) }
         return String(format: "毎日 %d:%02d", hour, minute)
     }
 
@@ -33,6 +36,8 @@ struct WatchRule: Codable, Identifiable, Equatable {
                   prompt: "未読のメールを確認して、すぐ返事が要るものだけを3件まで、差出人と用件を一言で挙げて。急ぎのものが無ければ、何も言わず静かにしている。"),
         WatchRule(name: "次の予定の知らせ", everyMinutes: 15,
                   prompt: "これから30分以内に始まる予定があれば、開始時刻と件名を伝えて。無ければ、何も言わず静かにしている。"),
+        WatchRule(name: "提出物の締切前の確認", hour: 10, minute: 0, dayOfMonth: 25,
+                  prompt: "check_submissions ツールで、今月の提出状況を調べて。未提出の人がいれば名前を挙げて。全員そろっていれば、何も言わず静かにしている。"),
     ]
 }
 
@@ -114,7 +119,13 @@ final class Watcher {
             guard let last = rule.lastRun else { return true }
             return now.timeIntervalSince(last) >= Double(max(1, minutes) * 60)
         }
-        // 毎日の決まった時刻。その時刻を過ぎていて、今日まだ実行していなければ
+        // 毎月の決まった日。その日でなければ動かさない（月末が短い月は、最終日に回す）
+        if let day = rule.dayOfMonth {
+            let today = cal.component(.day, from: now)
+            let lastDay = cal.range(of: .day, in: .month, for: now)?.count ?? 31
+            guard today == min(day, lastDay) else { return false }
+        }
+        // 決まった時刻を過ぎていて、今日まだ実行していなければ
         guard let today = cal.date(bySettingHour: rule.hour, minute: rule.minute, second: 0, of: now), now >= today else { return false }
         guard let last = rule.lastRun else { return true }
         return last < today

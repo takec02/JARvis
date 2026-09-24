@@ -84,6 +84,15 @@ final class AppSettings {
     var displayMode: DisplayMode { didSet { d.set(displayMode.rawValue, forKey: "displayMode") } }
     var backend: BackendKind { didSet { d.set(backend.rawValue, forKey: "backend") } }
     var ollamaModel: String { didSet { d.set(ollamaModel, forKey: "ollamaModel") } }
+    /// 提出物を集めている親フォルダ（この中に月ごとのフォルダを作る）
+    var submissionParentFolder: String { didSet { d.set(submissionParentFolder, forKey: "submissionParentFolder") } }
+    /// 名簿のスプレッドシート（URL）と、名前が並ぶ範囲
+    var rosterSheet: String { didSet { d.set(rosterSheet, forKey: "rosterSheet") } }
+    var rosterRange: String { didSet { d.set(rosterRange, forKey: "rosterRange") } }
+
+    /// 予定を入れる前に重なりを調べるカレンダー（ID をカンマ区切り。空なら主カレンダーだけ）
+    var conflictCalendars: String { didSet { d.set(conflictCalendars, forKey: "conflictCalendars") } }
+
     /// 通訳するときの相手の言語（音声認識の識別子。既定は英語）
     var interpreterLanguage: String { didSet { d.set(interpreterLanguage, forKey: "interpreterLanguage") } }
     /// 翻訳を AI にさせる（オフなら macOS 内蔵の翻訳。内蔵が使えないときは自動で AI になる）
@@ -133,6 +142,10 @@ final class AppSettings {
         ollamaModel = (savedModel == nil || savedModel == "qwen3:8b") ? "qwen3-vl:8b-instruct" : savedModel!
         ollamaContext = d.object(forKey: "ollamaContext") as? Int ?? 16384
         visionModel = d.string(forKey: "visionModel") ?? ""
+        submissionParentFolder = d.string(forKey: "submissionParentFolder") ?? ""
+        rosterSheet = d.string(forKey: "rosterSheet") ?? ""
+        rosterRange = d.string(forKey: "rosterRange") ?? "A:A"
+        conflictCalendars = d.string(forKey: "conflictCalendars") ?? ""
         interpreterLanguage = d.string(forKey: "interpreterLanguage") ?? "en-US"
         interpreterUseAI = d.object(forKey: "interpreterUseAI") as? Bool ?? false
         interpreterSpeak = d.object(forKey: "interpreterSpeak") as? Bool ?? true
@@ -175,6 +188,11 @@ final class AppSettings {
         text.split(whereSeparator: { ",、，".contains($0) }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
     var callWordList: [String] { Self.words(wakeCallWords) }
+    /// 重なりを調べるカレンダー（空なら主カレンダーだけ）
+    var conflictCalendarList: [String] {
+        let list = Self.words(conflictCalendars)
+        return list.isEmpty ? ["primary"] : list
+    }
     var prefixWordList: [String] { Self.words(wakePrefixWords) }
 
     /// 画面に出す呼びかけの例（「サスケ、応えて」）

@@ -479,8 +479,38 @@ final class MCPManager {
         return f.string(from: date)
     }
 
+    /// 予定を入れる・動かすとき、その時間帯にすでに入っている予定を調べる（終日の予定は数えない）
+    private func overlappingEvents(server: String, tool: String, args: [String: Value]) async -> [String] {
+        guard server == "google-personal", tool == "manage_event",
+              case .string(let action)? = args["action"], ["create", "update"].contains(action.lowercased()),
+              case .string(let start)? = args["start_time"], case .string(let end)? = args["end_time"],
+              let c = connections[server] else { return [] }
+        // 仕事用など、主カレンダー以外にも予定があるので、設定で選んだカレンダーを順に調べる
+        var found: [String] = []
+        for calendar in AppSettings.shared.conflictCalendarList.prefix(6) {
+            var query: [String: Value] = ["time_min": .string(start), "time_max": .string(end),
+                                          "max_results": .int(20), "calendar_id": .string(calendar)]
+            for (k, v) in autoArgs(for: server, tool: "get_events") where query[k] == nil { query[k] = v }
+            do {
+                let result = try await withTimeout(seconds: 15) {
+                    try await c.client.callTool(name: "get_events", arguments: query)
+                }
+                let text = Self.simplifyEvents(result.content.map(Self.render).joined(separator: "\n"))
+                found += text.components(separatedBy: .newlines)
+                    .filter { $0.contains("〜") && !$0.contains("終日") }
+                    // 確認では ID を読ませない
+                    .map { $0.replacingOccurrences(of: #"\s*\[ID: [^\]]+\]"#, with: "", options: .regularExpression) }
+            } catch {
+                Log.write("overlap check failed (\(calendar)): \(error.localizedDescription)")
+            }
+        }
+        // 同じ予定が複数のカレンダーに入っていることがあるので、重複は除く
+        var seen = Set<String>()
+        return found.filter { seen.insert($0).inserted }
+    }
+
     /// 確認のために読み上げる説明。何がどう変わるのかが分かる言い方にする
-    private func describe(server: String, tool: MCP.Tool, args: [String: Value]) -> String {
+    private func describe(server: String, tool: MCP.Tool, args: [String: Value], conflicts: [String] = []) -> String {
         let label = Self.serviceLabels[server] ?? server
         let phrase = Self.actionPhrase(server: server, tool: tool.name, args: args)
             ?? "\(label)で「\(tool.annotations.title ?? tool.title ?? tool.name)」を実行します"
@@ -511,6 +541,12 @@ final class MCPManager {
         }
         if let to = string("to") { lines.append("宛先: \(to)") }
         if let place = string("location") { lines.append("場所: \(place)") }
+        if !conflicts.isEmpty {
+            lines.append("この時間には、すでに次の予定が入っています:")
+            lines += conflicts.prefix(4).map { "・\($0)" }
+            if conflicts.count > 4 { lines.append("・ほか\(conflicts.count - 4)件") }
+            return lines.joined(separator: "\n") + "\n重なりますが、よろしいですか？"
+        }
         return lines.joined(separator: "\n") + "\nよろしいですか？"
     }
 
@@ -676,6 +712,15 @@ final class MCPManager {
         "google-personal/manage_event": (
             "Google カレンダーの予定を作る・変える・消す。action は create / update / delete。予定を入れると頼まれたら必ずこれを呼ぶ。start_time と end_time は 2026-09-23T18:00:00+09:00 の形式。終了時刻が分からなければ開始の1時間後にする",
             ["action", "summary", "start_time", "end_time", "event_id", "description", "location", "attendees", "calendar_id"]),
+        "google-personal/create_drive_folder": (
+            "Google ドライブにフォルダを作る。folder_name はフォルダ名。parent_folder_id は親フォルダの ID（ドライブの URL の /folders/ のあとの文字列）。親を指定しないとマイドライブの直下に作る",
+            ["folder_name", "parent_folder_id"]),
+        "google-personal/search_drive_files": (
+            "Google ドライブのファイルやフォルダを探す。query は Drive の検索式。例: 親フォルダの中のフォルダ一覧は \"'親フォルダのID' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false\"、名前で探すときは \"name contains '勤務表'\"",
+            ["query", "page_size"]),
+        "google-personal/read_sheet_values": (
+            "Google スプレッドシートの中身を読む。spreadsheet_id はシートの URL の /d/ のあとの文字列。range_name は「シート1!A:B」のような範囲",
+            ["spreadsheet_id", "range_name"]),
         "google-personal/get_events": (
             "Google カレンダーの予定を読む。time_min と time_max は 2026-09-23T00:00:00+09:00 の形式",
             ["time_min", "time_max", "calendar_id", "query"]),
@@ -722,6 +767,21 @@ final class MCPManager {
         }
     }
 
+    /// Google のカレンダー一覧（設定画面で、重なりを調べる対象を選ぶのに使う）
+    func googleCalendars() async -> [(id: String, name: String)] {
+        guard let c = connections["google-personal"] else { return [] }
+        var args: [String: Value] = [:]
+        for (k, v) in autoArgs(for: "google-personal", tool: "list_calendars") { args[k] = v }
+        guard let result = try? await withTimeout(seconds: 20, { try await c.client.callTool(name: "list_calendars", arguments: args) }) else { return [] }
+        let text = result.content.map(Self.render).joined(separator: "\n")
+        guard let re = try? NSRegularExpression(pattern: #"- "(.*?)" \(ID: (\S+?)\)"#) else { return [] }
+        return text.components(separatedBy: .newlines).compactMap { line in
+            let ns = line as NSString
+            guard let m = re.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { return nil }
+            return (ns.substring(with: m.range(at: 2)), ns.substring(with: m.range(at: 1)))
+        }
+    }
+
     func handles(_ toolName: String) -> Bool { toolIndex[toolName] != nil }
 
     /// サーバーごとのツール名一覧（設定画面の表示用）
@@ -750,7 +810,9 @@ final class MCPManager {
         for (k, v) in autoArgs(for: server, tool: tool) { args[k] = v }
         if server == "google-personal", tool == "get_events" { Self.localizeDayRange(&args) }
         if let spec = c.tools.first(where: { $0.name == tool }), needsConfirmation(spec) {
-            let ok = await AgentController.shared.confirm(describe(server: server, tool: spec, args: args))
+            // 予定を入れる前に、同じ時間帯に何か入っていないか調べて、確認のときに伝える
+            let conflicts = await overlappingEvents(server: server, tool: tool, args: args)
+            let ok = await AgentController.shared.confirm(describe(server: server, tool: spec, args: args, conflicts: conflicts))
             if !ok {
                 return ("ユーザーが実行を取りやめました。実行していないことを伝えてください", true)
             }
