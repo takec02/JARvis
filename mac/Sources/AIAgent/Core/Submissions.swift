@@ -20,9 +20,14 @@ enum Submissions {
         return nil
     }
 
-    /// 名簿（スプレッドシート）から名前の一覧を読む
+    /// 名簿を読む。スプレッドシートが未設定なら、設定に直接書かれた一覧（1行1名）を使う
     static func roster(sheet: String, range: String) async -> [String] {
-        guard let id = driveID(from: sheet) else { return [] }
+        guard let id = driveID(from: sheet) else {
+            return AppSettings.shared.rosterNames
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
         let (text, isError) = await MCPManager.shared.call(
             "google-personal__read_sheet_values",
             arguments: ["spreadsheet_id": id, "range_name": range],
@@ -115,7 +120,7 @@ enum Submissions {
         }
         let names = await roster(sheet: sheet, range: range)
         guard !names.isEmpty else {
-            throw Tools.ToolError(message: "名簿を読めませんでした（シートの URL と範囲を確かめてください）")
+            throw Tools.ToolError(message: "名簿がありません（設定 → 予定・提出物 で、スプレッドシートの URL か、名前の一覧を登録してください）")
         }
         var found = await folderNames(in: folderID)
         if found.isEmpty { found = await fileNames(in: folderID) }

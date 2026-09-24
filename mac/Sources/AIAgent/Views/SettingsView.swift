@@ -599,6 +599,13 @@ private struct CalendarSettings: View {
                 TextField("名簿のスプレッドシート", text: $s.rosterSheet,
                           prompt: Text("スプレッドシートの URL を貼り付け"))
                 TextField("名前が並ぶ範囲", text: $s.rosterRange, prompt: Text("例: シート1!A2:A"))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("または、名前を直接書く（1行に1名。上のシートが空のときに使います）")
+                    TextEditor(text: $s.rosterNames)
+                        .frame(height: 80)
+                        .font(.body)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.4)))
+                }
                 Text("「未提出は誰？」と聞くと、フォルダの中のフォルダ名（またはファイル名）と名簿を突き合わせ、出していない人を挙げます。月ごとのフォルダは「10月のフォルダを作って」と頼めば作れます。締切前の自動確認は、設定 → お知らせ の「提出物の締切前の確認」をオンにしてください。")
                     .font(.caption).foregroundStyle(.secondary)
             }

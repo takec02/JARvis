@@ -89,6 +89,8 @@ final class AppSettings {
     /// 名簿のスプレッドシート（URL）と、名前が並ぶ範囲
     var rosterSheet: String { didSet { d.set(rosterSheet, forKey: "rosterSheet") } }
     var rosterRange: String { didSet { d.set(rosterRange, forKey: "rosterRange") } }
+    /// 名簿を直接書く場合（1行に1名。スプレッドシートを使わないとき）
+    var rosterNames: String { didSet { d.set(rosterNames, forKey: "rosterNames") } }
 
     /// 予定を入れる前に重なりを調べるカレンダー（ID をカンマ区切り。空なら主カレンダーだけ）
     var conflictCalendars: String { didSet { d.set(conflictCalendars, forKey: "conflictCalendars") } }
@@ -145,6 +147,7 @@ final class AppSettings {
         submissionParentFolder = d.string(forKey: "submissionParentFolder") ?? ""
         rosterSheet = d.string(forKey: "rosterSheet") ?? ""
         rosterRange = d.string(forKey: "rosterRange") ?? "A:A"
+        rosterNames = d.string(forKey: "rosterNames") ?? ""
         conflictCalendars = d.string(forKey: "conflictCalendars") ?? ""
         interpreterLanguage = d.string(forKey: "interpreterLanguage") ?? "en-US"
         interpreterUseAI = d.object(forKey: "interpreterUseAI") as? Bool ?? false

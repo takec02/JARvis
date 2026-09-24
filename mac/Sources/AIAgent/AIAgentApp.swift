@@ -215,6 +215,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // 動作確認用: `AIAgent --drive-read-selftest` で、ドライブの読み取りと突き合わせを試す（書き込みはしない）
+        if args.contains("--drive-read-selftest") {
+            Task { @MainActor in
+                await MCPManager.shared.reload()
+                let names = await Submissions.folderNames(in: "root")
+                print("マイドライブ直下のフォルダ: \(names.count)件")
+                guard names.count >= 2 else {
+                    print("（フォルダが少ないため、突き合わせは試せません）")
+                    exit(0)
+                }
+                let roster = [names[0], names[1], "存在しないはずの名前ZZZ"]
+                let r = Submissions.compare(roster: roster, found: names)
+                print("名簿3件のうち 提出済み \(r.submitted.count)件 / 未提出 \(r.missing.count)件")
+                print("未提出として挙がったもの: \(r.missing)")
+                exit(0)
+            }
+            return
+        }
         // 動作確認用: 名前の突き合わせだけを試す（ドライブに触れない）
         if args.contains("--match-selftest") {
             let roster = ["山田 太郎", "鈴木花子", "ＡＢＣ商事", "佐藤"]
