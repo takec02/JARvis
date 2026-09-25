@@ -66,7 +66,8 @@ enum HTTP {
     }
 
     static func postLines(_ url: String, headers: [String: String], body: [String: Any]) async throws -> AsyncLineSequence<URLSession.AsyncBytes> {
-        var req = URLRequest(url: URL(string: url)!, timeoutInterval: 120)
+        // 議事録の要約など、長い入力では最初の1文字まで時間がかかる（ローカル AI では数分）
+        var req = URLRequest(url: URL(string: url)!, timeoutInterval: 600)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         headers.forEach { req.setValue($1, forHTTPHeaderField: $0) }

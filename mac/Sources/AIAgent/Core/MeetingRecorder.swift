@@ -179,6 +179,17 @@ final class MeetingRecorder {
         let text: String
     }
 
+    /// いちばん新しい議事録（「議事録どこ？」に答えるのに使う）
+    static func latestFile() -> URL? {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.filter { $0.pathExtension == "md" }
+            .sorted { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return da > db
+            }.first
+    }
+
     static let folder: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Documents/AIエージェント/議事録")
 

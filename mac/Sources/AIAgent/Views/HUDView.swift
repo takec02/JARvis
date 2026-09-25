@@ -244,6 +244,7 @@ struct HUDBackground: View {
 struct HUDView: View {
     @Environment(AgentController.self) private var agent
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     @State private var showInput = false
     @State private var input = ""
     @FocusState private var inputFocused: Bool
@@ -449,6 +450,10 @@ struct HUDView: View {
             HUDButton(symbol: agent.meeting.isRecording ? "stop.circle.fill" : "record.circle", tint: agent.meeting.isRecording ? .red : tint,
                       help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
                 agent.toggleMeeting()
+            }
+            HUDButton(symbol: "doc.text", tint: tint, help: "議事録を読む") {
+                NSApp.activate()
+                openWindow(id: "notes")
             }
             HUDButton(symbol: "captions.bubble", tint: tint,
                       help: Subtitles.shared.running ? "字幕をやめる" : "会議・動画に日本語字幕を出す",

@@ -202,6 +202,10 @@ enum Tools {
             return removed.isEmpty ? "当てはまる記憶はありませんでした"
                 : "消しました:\n" + removed.map { "・\($0.text)" }.joined(separator: "\n")
         case "look_camera":
+            // AI が脈絡なくカメラを使うことがあるので、利用者の言葉に「見せている」合図があるときだけ撮る
+            guard CameraAttachment.isCameraRequest(AgentController.shared.lastUserText) else {
+                return "今はカメラを使う場面ではありません。カメラで見てほしいときは「これ何？」「これ読んで」などと言ってもらってください。写真は撮っていません"
+            }
             let r = try await Camera.shared.look()
             var out = ["カメラで1枚撮りました（写真は画面に表示中）。"]
             out.append(r.text.isEmpty ? "写っている文字: なし" : "写っている文字:\n" + r.text.joined(separator: "\n"))

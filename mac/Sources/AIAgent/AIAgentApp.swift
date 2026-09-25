@@ -30,6 +30,12 @@ struct AIAgentApp: App {
         .defaultSize(width: 460, height: 720)
         .defaultLaunchBehavior(.suppressed)
 
+        Window("議事録", id: "notes") {
+            NotesView()
+                .environment(agent)
+        }
+        .defaultSize(width: 860, height: 560)
+
         Window("AIエージェントへようこそ", id: "onboarding") {
             OnboardingView()
                 .environment(agent)
@@ -208,6 +214,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await MCPManager.shared.reload()
                 do {
                     print(try await Submissions.check(folder: args[i + 1], sheet: args[i + 2], range: args[i + 3]))
+                } catch {
+                    print("error: \(error.localizedDescription)")
+                }
+                exit(0)
+            }
+            return
+        }
+        // 動作確認用: `AIAgent --summarize-selftest <議事録のパス>` で、あとから要約を作れるか試す
+        if let i = args.firstIndex(of: "--summarize-selftest"), args.count > i + 1 {
+            Task { @MainActor in
+                let url = URL(fileURLWithPath: args[i + 1])
+                let started = Date()
+                do {
+                    try await AgentController.shared.summarizeNotes(at: url)
+                    let body = try String(contentsOf: url, encoding: .utf8)
+                    print(String(format: "%.0f秒で要約しました", Date().timeIntervalSince(started)))
+                    print(body.components(separatedBy: "## 文字起こし").first ?? "")
                 } catch {
                     print("error: \(error.localizedDescription)")
                 }
