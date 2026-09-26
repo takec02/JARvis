@@ -30,6 +30,12 @@ struct AIAgentApp: App {
         .defaultSize(width: 460, height: 720)
         .defaultLaunchBehavior(.suppressed)
 
+        Window("資料", id: "library") {
+            LibraryView()
+                .environment(agent)
+        }
+        .defaultSize(width: 720, height: 480)
+
         Window("議事録", id: "notes") {
             NotesView()
                 .environment(agent)
@@ -221,6 +227,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // 動作確認用: `AIAgent --library-selftest <ファイル>...` で、資料の取り込みと検索を試す
+        if let i = args.firstIndex(of: "--library-selftest"), args.count > i + 1 {
+            Task { @MainActor in
+                for path in args[(i + 1)...] {
+                    let url = URL(fileURLWithPath: path)
+                    do {
+                        let source = try await Library.shared.add(url: url)
+                        print("✅ \(source.name): \(source.chunkCount)か所")
+                    } catch {
+                        print("❌ \(url.lastPathComponent): \(error.localizedDescription)")
+                    }
+                }
+                for q in ["締切は何日？", "有給の繰り越しは？", "設計はいつから", "サーバー費用"] {
+                    let hits = Library.shared.search(q, limit: 2)
+                    print("\n質問: \(q)")
+                    for h in hits {
+                        print("  → \(h.source.name) / \(h.chunk.label)（点数 \(String(format: "%.1f", h.score))）: \(h.chunk.text.replacingOccurrences(of: "\n", with: " ").prefix(70))")
+                    }
+                    if hits.isEmpty { print("  → 見つかりません") }
+                }
+                if !args.contains("--keep") { Library.shared.removeAll() }
+                exit(0)
+            }
+            return
+        }
         // 動作確認用: `AIAgent --summarize-selftest <議事録のパス>` で、あとから要約を作れるか試す
         if let i = args.firstIndex(of: "--summarize-selftest"), args.count > i + 1 {
             Task { @MainActor in
@@ -373,8 +404,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("tools: \(Tools.specs(local: true).count)")
                 let backend = try! makeBackend(.local, settings: AppSettings.shared)
                 var out = ""
+                // アプリ本体と同じように、資料から関係しそうな箇所を先に添える
+                var question = args[q + 1]
+                if !Library.shared.sources.isEmpty {
+                    let found = Library.shared.context(for: question, limit: 4)
+                    if !found.isEmpty {
+                        print("資料から \(found.components(separatedBy: "【").count - 1)か所を添えました")
+                        question += "\n\n（登録された資料から、関係しそうな箇所です。答えに使ったときは【】の資料名を一言添えてください。ここに無いことは「資料には書かれていません」と答えてください）\n" + found
+                    }
+                }
                 do {
-                    for try await c in backend.respond(history: [], user: args[q + 1], system: AgentController.shared.debugSystemPrompt()) { out += c }
+                    for try await c in backend.respond(history: [], user: question, system: AgentController.shared.debugSystemPrompt()) { out += c }
                 } catch { out = "error: \(error)" }
                 print("answer: \(out)")
                 exit(0)

@@ -451,6 +451,10 @@ struct HUDView: View {
                       help: agent.meeting.isRecording ? "会議の記録を終了して要約" : "会議を記録", active: agent.meeting.isRecording) {
                 agent.toggleMeeting()
             }
+            HUDButton(symbol: "books.vertical", tint: tint, help: "資料を登録する（その内容について聞けます）") {
+                NSApp.activate()
+                openWindow(id: "library")
+            }
             HUDButton(symbol: "doc.text", tint: tint, help: "議事録を読む") {
                 NSApp.activate()
                 openWindow(id: "notes")

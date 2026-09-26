@@ -74,6 +74,10 @@ enum Tools {
         ToolSpec(name: "look_camera",
                  description: "Mac のカメラで今見えているものを1枚撮って見る。「これ何？」「これ読んで」「この名刺を登録して」「QR コード読んで」など、ユーザーがカメラに何かを見せているときに使う。写っている文字と QR コード・バーコードの中身を返す",
                  properties: [:]),
+        ToolSpec(name: "search_documents",
+                 description: "登録した資料（PDF・Word・PowerPoint・Excel・テキストなど）の中から、質問に関係する箇所を探す。資料の内容について聞かれたら、答える前に必ずこれを使う。query は探したい言葉",
+                 properties: ["query": ["type": "string"]]),
+        ToolSpec(name: "list_documents", description: "登録されている資料の一覧を返す", properties: [:]),
         ToolSpec(name: "check_submissions",
                  description: "Google ドライブのフォルダの中身と名簿を突き合わせ、まだ出していない人（案件）を調べる。folder はフォルダの URL か ID（省略すると設定の親フォルダの中の今月のフォルダ）。「未提出は誰？」「勤務表そろってる？」と聞かれたら使う",
                  properties: ["folder": ["type": "string"]]),
@@ -215,6 +219,20 @@ enum Tools {
             let text = out.joined(separator: "\n")
             Camera.shared.note(reading: text)
             return text
+        case "search_documents":
+            let query = args["query"] as! String
+            let found = Library.shared.context(for: query)
+            guard !found.isEmpty else {
+                let count = Library.shared.sources.count
+                return count == 0
+                    ? "資料がまだ登録されていません。画面の本のボタンから追加できます"
+                    : "登録された\(count)件の資料の中に、関係しそうな箇所は見つかりませんでした"
+            }
+            return "資料から見つかった箇所です。答えるときは【】の中の資料名とページを添えてください。\n\n" + found
+        case "list_documents":
+            let sources = Library.shared.sources
+            guard !sources.isEmpty else { return "資料はまだ登録されていません" }
+            return "登録されている資料 \(sources.count)件:\n" + sources.map { "・\($0.name)" }.joined(separator: "\n")
         case "check_submissions":
             let folder = (args["folder"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             let settings = AppSettings.shared
